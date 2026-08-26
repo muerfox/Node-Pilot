@@ -1,0 +1,10 @@
+-r base.txt
+pytest>=8.2,<8.3
+pytest-django>=4.8,<4.9
+pytest-asyncio>=0.23,<0.24
+factory-boy>=3.3,<3.4
+fakeredis>=2.23,<2.24
+lupa>=2.2,<2.3
+django-debug-toolbar>=4.4,<4.5
+ruff>=0.5,<0.6
+mypy>=1.10,<1.11

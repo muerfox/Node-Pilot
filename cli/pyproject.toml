@@ -1,0 +1,24 @@
+[project]
+name = "nodepilot-cli"
+version = "1.0.0"
+description = "nodepilot -- command-line client for the NodePilot API."
+requires-python = ">=3.11"
+dependencies = [
+    "click>=8.1,<9.0",
+    "httpx>=0.27,<0.28",
+    "PyYAML>=6.0,<7.0",
+    "tabulate>=0.9,<0.10",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.2,<8.3"]
+
+[project.scripts]
+nodepilot = "nodepilot_cli.main:cli"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["nodepilot_cli*"]

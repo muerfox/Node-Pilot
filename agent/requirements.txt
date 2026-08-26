@@ -1,0 +1,9 @@
+websockets>=12.0,<13.0
+httpx>=0.27,<0.28
+psutil>=5.9,<6.0
+PyYAML>=6.0,<7.0
+# Optional: only needed for real libvirt/QEMU operation. Requires the
+# libvirt-dev / libvirt-devel system package to build. The agent runs
+# (and reports a clear error on any libvirt-dependent operation) without
+# it, so CI and non-hypervisor environments don't need it installed.
+libvirt-python>=10.0; sys_platform == "linux"

@@ -1,0 +1,24 @@
+[Unit]
+Description=NodePilot Controller -- ASGI web process (HTTP + WebSockets)
+After=network.target postgresql.service redis-server.service
+Wants=postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=nodepilot
+Group=nodepilot
+WorkingDirectory=/opt/nodepilot/backend
+EnvironmentFile=/opt/nodepilot/backend/.env
+Environment=DJANGO_SETTINGS_MODULE=config.settings.production
+ExecStart=/opt/nodepilot/backend/.venv/bin/uvicorn config.asgi:application \
+    --host 0.0.0.0 --port 8000 --workers 4 --proxy-headers
+Restart=always
+RestartSec=5
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/nodepilot /opt/nodepilot/backend/staticfiles
+
+[Install]
+WantedBy=multi-user.target

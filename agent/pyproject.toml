@@ -1,0 +1,25 @@
+[project]
+name = "nodepilot-agent"
+version = "1.0.0"
+description = "NodePilot Agent -- runs on every KVM hypervisor and speaks the NodePilot Agent Protocol to the controller."
+requires-python = ">=3.11"
+dependencies = [
+    "websockets>=12.0,<13.0",
+    "httpx>=0.27,<0.28",
+    "psutil>=5.9,<6.0",
+    "PyYAML>=6.0,<7.0",
+]
+
+[project.optional-dependencies]
+libvirt = ["libvirt-python>=10.0"]
+dev = ["pytest>=8.2,<8.3", "pytest-asyncio>=0.23,<0.24"]
+
+[project.scripts]
+nodepilot-agent = "nodepilot_agent.main:run"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["nodepilot_agent*"]

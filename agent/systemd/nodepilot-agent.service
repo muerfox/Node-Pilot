@@ -1,0 +1,37 @@
+[Unit]
+Description=NodePilot Agent
+Documentation=https://github.com/muerfox/Node-Pilot
+After=network-online.target libvirtd.service
+Wants=network-online.target
+Requires=libvirtd.service
+
+[Service]
+Type=simple
+# Runs as a dedicated, unprivileged user (section 3: "do not run the
+# agent as root unless a privileged operation explicitly requires it").
+# Membership in the `libvirt` group grants access to the libvirt socket
+# without full root; `kvm` group membership is needed for /dev/kvm.
+User=nodepilot
+Group=nodepilot
+SupplementaryGroups=libvirt kvm disk
+EnvironmentFile=-/etc/nodepilot/agent.env
+ExecStart=/usr/local/bin/nodepilot-agent --config /etc/nodepilot/agent.yaml
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=0
+
+# Least-privilege hardening. NoNewPrivileges + the capability bounding set
+# below deliberately do NOT include anything that would let this process
+# act as root even if compromised -- disk/network provisioning is done via
+# the `disk`/`libvirt`/`kvm` group memberships and the setuid helpers
+# those groups already grant (e.g. lvm2, zfsutils-linux), not via ambient
+# root capabilities.
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/nodepilot /etc/nodepilot
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

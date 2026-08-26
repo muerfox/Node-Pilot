@@ -1,0 +1,109 @@
+name: nodepilot
+
+x-backend-env: &backend-env
+  DJANGO_SETTINGS_MODULE: config.settings.development
+  SECRET_KEY: dev-secret-key-do-not-use-in-production
+  DEBUG: "true"
+  ALLOWED_HOSTS: "*"
+  POSTGRES_DB: nodepilot
+  POSTGRES_USER: nodepilot
+  POSTGRES_PASSWORD: nodepilot
+  POSTGRES_HOST: postgres
+  POSTGRES_PORT: "5432"
+  REDIS_URL: redis://redis:6379/0
+  CELERY_BROKER_URL: redis://redis:6379/1
+  CELERY_RESULT_BACKEND: redis://redis:6379/2
+  JWT_SIGNING_KEY: dev-jwt-signing-key
+  MIN_SUPPORTED_AGENT_VERSION: "1.0.0"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: nodepilot
+      POSTGRES_USER: nodepilot
+      POSTGRES_PASSWORD: nodepilot
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nodepilot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  nodepilot-web:
+    build:
+      context: .
+      dockerfile: deployment/docker/backend.Dockerfile
+    command: >
+      sh -c "python manage.py migrate --noinput &&
+             python manage.py seed_rbac &&
+             uvicorn config.asgi:application --host 0.0.0.0 --port 8000 --reload"
+    environment: *backend-env
+    volumes:
+      - ./backend:/app/backend
+      - media:/app/media
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nodepilot-worker:
+    build:
+      context: .
+      dockerfile: deployment/docker/backend.Dockerfile
+    command: celery -A config worker -l info
+    environment: *backend-env
+    volumes:
+      - ./backend:/app/backend
+      - media:/app/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nodepilot-beat:
+    build:
+      context: .
+      dockerfile: deployment/docker/backend.Dockerfile
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment: *backend-env
+    volumes:
+      - ./backend:/app/backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  nodepilot-agent-dev:
+    build:
+      context: .
+      dockerfile: deployment/docker/agent-dev.Dockerfile
+    environment:
+      NODEPILOT_AGENT_CONTROLLER_URL: http://nodepilot-web:8000
+      NODEPILOT_AGENT_NODE_ID: ${DEV_NODE_ID:-}
+      NODEPILOT_AGENT_AGENT_TOKEN: ${DEV_AGENT_TOKEN:-}
+    depends_on:
+      - nodepilot-web
+    profiles: ["agent"]  # opt-in: `docker compose --profile agent up` once you have a node/token
+
+volumes:
+  postgres_data:
+  media:
