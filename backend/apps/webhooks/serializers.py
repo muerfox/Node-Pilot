@@ -24,13 +24,23 @@ def _is_private_host(hostname: str) -> bool:
 
 
 class WebhookSerializer(serializers.ModelSerializer):
+    """
+    Used for list/retrieve/update. The signing secret is masked here --
+    someone with webhook.manage listing webhooks should not be able to
+    read every webhook's live signing key indefinitely; it's only ever
+    shown in full immediately after creation (WebhookCreateSerializer).
+    """
+
     organization = serializers.SlugRelatedField(slug_field="uuid", queryset=Webhook._meta.get_field("organization").related_model.objects.all())
-    secret = serializers.CharField(read_only=True)
+    secret = serializers.SerializerMethodField()
 
     class Meta:
         model = Webhook
         fields = ["uuid", "organization", "name", "url", "secret", "events", "enabled", "created_at"]
         read_only_fields = ["uuid", "secret", "created_at"]
+
+    def get_secret(self, obj: Webhook) -> str:
+        return f"{'*' * 8}{obj.secret[-4:]}"
 
     def validate_url(self, value: str) -> str:
         parsed = urlparse(value)
@@ -54,6 +64,13 @@ class WebhookSerializer(serializers.ModelSerializer):
             if unknown:
                 raise serializers.ValidationError(f"Unsupported event types: {sorted(unknown)}")
         return value
+
+
+class WebhookCreateSerializer(WebhookSerializer):
+    """Full plaintext secret, shown exactly once in the create response."""
+
+    def get_secret(self, obj: Webhook) -> str:
+        return obj.secret
 
 
 class WebhookDeliverySerializer(serializers.ModelSerializer):

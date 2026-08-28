@@ -19,11 +19,11 @@ deferred in this codebase).
 
 ```
 backend/     Django/DRF/Channels/Celery controller -- the API, RBAC,
-             job system, and web UI
+             and job system
 agent/       nodepilot-agent -- runs on every KVM hypervisor; libvirt,
              storage, network, cloud-init, metrics
 cli/         nodepilot -- CLI client for the REST API
-frontend/    Web UI (not built in this pass -- see frontend/README.md)
+frontend/    React/TypeScript web UI -- see frontend/README.md
 deployment/  Dockerfiles, systemd units, nginx config
 docs/        Architecture and installation docs
 scripts/     Convenience installer for the agent
@@ -38,15 +38,20 @@ docker compose up --build
 
 This brings up PostgreSQL, Redis, the ASGI controller, a Celery worker,
 and Celery Beat, running migrations and seeding the RBAC catalog
-automatically. Then:
+automatically. Then, in a second terminal:
 
+```bash
+cd frontend && npm install && npm run dev
+```
+
+- Web UI: http://localhost:5173/
 - API docs: http://localhost:8000/api/docs/
 - Admin: http://localhost:8000/admin/ (create a superuser first: `docker
   compose exec nodepilot-web python manage.py createsuperuser`)
 - Health: http://localhost:8000/health/ready/
 
-Register a hypervisor node and its agent via the API or CLI, then run the
-agent on that host -- see `docs/installation.md` section 2. The
+Register a hypervisor node and its agent via the UI, API, or CLI, then
+run the agent on that host -- see `docs/installation.md` section 2. The
 production controller install (no Docker required) is documented in
 `docs/installation.md` section 1.
 
@@ -60,15 +65,17 @@ make agent-test
 make cli-test
 ```
 
-The backend suite (36 tests) runs against SQLite with a faked Redis (no
+The backend suite (42 tests) runs against SQLite with a faked Redis (no
 external services required); it covers the RBAC policy engine, quota
 enforcement, IPAM allocation, distributed locking, the Job state machine,
-and a full VM-provisioning run with the agent RPC layer mocked. The agent
-suite (23 tests, +3 skipped when `qemu-img` isn't installed) covers
-protocol framing, domain-XML generation (including XML-injection safety),
-the storage backends' path-traversal protection, and operation dispatch.
-The CLI suite (8 tests) covers the HTTP client and command wiring. All
-67 tests pass as of this build.
+a full VM-provisioning run, and disk/NIC hot-plug, all with the agent RPC
+layer mocked. The agent suite (23 tests, +3 skipped when `qemu-img` isn't
+installed) covers protocol framing, domain-XML generation (including
+XML-injection safety), the storage backends' path-traversal protection,
+and operation dispatch. The CLI suite (8 tests) covers the HTTP client
+and command wiring. The frontend (`npm run typecheck && npm run lint &&
+npm run build`) type-checks, lints clean, and builds to a 91 KB gzipped
+bundle. 73 automated tests pass as of this build.
 
 ## CLI
 

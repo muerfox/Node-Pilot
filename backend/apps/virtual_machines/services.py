@@ -14,7 +14,7 @@ from apps.common.locks import LockAcquisitionError
 from apps.jobs.models import JobType
 from apps.jobs.services import create_job
 from apps.organizations.services import check_and_reserve
-from apps.virtual_machines.locks import lifecycle_lock
+from apps.virtual_machines.locks import lifecycle_lock, storage_lock
 from apps.virtual_machines.mac import generate_mac_address
 from apps.virtual_machines.models import ProvisioningState, VirtualMachine, VMDisk, VMNic, VMStatus
 
@@ -265,3 +265,68 @@ def migrate_vm(vm, requested_by, *, target_node):
         "Compatibility checks passed, but live migration execution is not yet implemented in this "
         "release (see the roadmap in section 70/Phase 9). No changes were made."
     )
+
+
+def _start_storage_job(vm, job_type: str, task_callable, *, requested_by, task_args: tuple) -> "Job":
+    """Same optimistic-check-then-authoritative-lock pattern as
+    _start_lifecycle_job, but for the vm:{uuid}:storage lock (section 20:
+    resize/attach/detach must never race a delete or a snapshot op)."""
+    lock = storage_lock(vm)
+    if not lock.acquire(blocking=False):
+        raise ResourceLocked(f"VM {vm.name} has another storage operation in progress.")
+    lock.release()
+
+    job = create_job(
+        type=job_type, resource_type="VirtualMachine", resource_id=str(vm.uuid),
+        organization=vm.organization, node=vm.node, created_by=requested_by,
+    )
+    transaction.on_commit(lambda: task_callable.delay(job.pk, *task_args))
+    return job
+
+
+@transaction.atomic
+def attach_disk(vm, *, storage, size_gb: int, bus: str = "VIRTIO", requested_by) -> tuple[VMDisk, "Job"]:
+    from apps.virtual_machines.tasks import attach_disk_task
+
+    check_and_reserve(vm.organization, vm.project, additional_storage_gb=size_gb)
+
+    disk = VMDisk.objects.create(
+        vm=vm, storage=storage, name=f"disk-{vm.disks.count() + 1}", bus=bus,
+        size_bytes=size_gb * 1024**3, boot_index=vm.disks.count(),
+    )
+    job = _start_storage_job(vm, JobType.DISK_ATTACH, attach_disk_task, requested_by=requested_by, task_args=(disk.pk,))
+    return disk, job
+
+
+def detach_disk(vm, disk: VMDisk, requested_by) -> "Job":
+    if disk.bootable:
+        raise InvalidStateTransition("Cannot detach a VM's boot disk.")
+    from apps.virtual_machines.tasks import detach_disk_task
+
+    return _start_storage_job(vm, JobType.DISK_DETACH, detach_disk_task, requested_by=requested_by, task_args=(disk.pk,))
+
+
+def resize_disk(vm, disk: VMDisk, new_size_gb: int, requested_by) -> "Job":
+    new_size_bytes = new_size_gb * 1024**3
+    if new_size_bytes <= disk.size_bytes:
+        raise InvalidStateTransition("A disk can only be grown, not shrunk, while attached.")
+    check_and_reserve(vm.organization, vm.project, additional_storage_gb=(new_size_bytes - disk.size_bytes) // 1024**3)
+
+    from apps.virtual_machines.tasks import resize_disk_task
+
+    return _start_storage_job(vm, JobType.DISK_RESIZE, resize_disk_task, requested_by=requested_by, task_args=(disk.pk, new_size_bytes))
+
+
+@transaction.atomic
+def attach_nic(vm, *, network, model: str = "VIRTIO", vlan: int | None = None, requested_by) -> tuple[VMNic, "Job"]:
+    from apps.virtual_machines.tasks import attach_nic_task
+
+    nic = VMNic.objects.create(vm=vm, network=network, model=model, vlan=vlan, mac_address=generate_mac_address(), boot_index=vm.nics.count())
+    job = _start_storage_job(vm, JobType.NIC_ATTACH, attach_nic_task, requested_by=requested_by, task_args=(nic.pk,))
+    return nic, job
+
+
+def detach_nic(vm, nic: VMNic, requested_by) -> "Job":
+    from apps.virtual_machines.tasks import detach_nic_task
+
+    return _start_storage_job(vm, JobType.NIC_DETACH, detach_nic_task, requested_by=requested_by, task_args=(nic.pk,))

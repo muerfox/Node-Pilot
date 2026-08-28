@@ -37,6 +37,11 @@ class VirtualMachineViewSet(OrganizationScopedModelViewSet):
         "clone": "vm.clone",
         "migrate": "vm.migrate",
         "console": "vm.console",
+        "attach_disk": "vm.update",
+        "resize_disk": "vm.update",
+        "remove_disk": "vm.update",
+        "attach_nic": "vm.update",
+        "remove_nic": "vm.update",
     }
     filterset_fields = ["status", "node", "project"]
     search_fields = ["name", "hostname", "description"]
@@ -149,6 +154,64 @@ class VirtualMachineViewSet(OrganizationScopedModelViewSet):
         services.migrate_vm(vm, request.user, target_node=target_node)  # raises 501 today; kept for a future release.
         return Response(status=status.HTTP_202_ACCEPTED)  # pragma: no cover - unreachable until migration ships
 
+    @action(detail=True, methods=["post"], url_path="disks")
+    def attach_disk(self, request, uuid=None):
+        from apps.storage.models import StoragePool
+
+        vm = self.get_object()
+        storage = StoragePool.objects.filter(uuid=request.data.get("storage")).first()
+        if storage is None:
+            return Response({"error": {"code": "VALIDATION_FAILED", "message": "storage not found", "details": {}}}, status=400)
+        size_gb = int(request.data.get("size_gb", 0))
+        if size_gb <= 0:
+            return Response({"error": {"code": "VALIDATION_FAILED", "message": "size_gb must be positive", "details": {}}}, status=400)
+        disk, job = services.attach_disk(vm, storage=storage, size_gb=size_gb, bus=request.data.get("bus", "VIRTIO"), requested_by=request.user)
+        log_from_request(request, action="VM_DISK_ATTACH", resource_type="VirtualMachine", resource_id=str(vm.uuid), organization=vm.organization)
+        return Response({"disk_id": str(disk.uuid), "job_id": str(job.uuid), "status": "queued"}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["post"], url_path=r"disks/(?P<disk_uuid>[0-9a-f-]{36})/resize")
+    def resize_disk(self, request, uuid=None, disk_uuid=None):
+        vm = self.get_object()
+        disk = vm.disks.filter(uuid=disk_uuid).first()
+        if disk is None:
+            return Response({"error": {"code": "NOT_FOUND", "message": "disk not found", "details": {}}}, status=404)
+        new_size_gb = int(request.data.get("size_gb", 0))
+        job = services.resize_disk(vm, disk, new_size_gb, request.user)
+        log_from_request(request, action="VM_DISK_RESIZE", resource_type="VirtualMachine", resource_id=str(vm.uuid), organization=vm.organization)
+        return Response({"job_id": str(job.uuid), "status": "queued"}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["delete"], url_path=r"disks/(?P<disk_uuid>[0-9a-f-]{36})")
+    def remove_disk(self, request, uuid=None, disk_uuid=None):
+        vm = self.get_object()
+        disk = vm.disks.filter(uuid=disk_uuid).first()
+        if disk is None:
+            return Response({"error": {"code": "NOT_FOUND", "message": "disk not found", "details": {}}}, status=404)
+        job = services.detach_disk(vm, disk, request.user)
+        log_from_request(request, action="VM_DISK_DETACH", resource_type="VirtualMachine", resource_id=str(vm.uuid), organization=vm.organization)
+        return Response({"job_id": str(job.uuid), "status": "queued"}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["post"], url_path="nics")
+    def attach_nic(self, request, uuid=None):
+        from apps.networks.models import Network
+
+        vm = self.get_object()
+        network = Network.objects.filter(uuid=request.data.get("network")).first()
+        if network is None:
+            return Response({"error": {"code": "VALIDATION_FAILED", "message": "network not found", "details": {}}}, status=400)
+        nic, job = services.attach_nic(vm, network=network, model=request.data.get("model", "VIRTIO"), vlan=request.data.get("vlan"), requested_by=request.user)
+        log_from_request(request, action="VM_NIC_ATTACH", resource_type="VirtualMachine", resource_id=str(vm.uuid), organization=vm.organization)
+        return Response({"nic_id": str(nic.uuid), "job_id": str(job.uuid), "status": "queued"}, status=status.HTTP_202_ACCEPTED)
+
+    @action(detail=True, methods=["delete"], url_path=r"nics/(?P<nic_uuid>[0-9a-f-]{36})")
+    def remove_nic(self, request, uuid=None, nic_uuid=None):
+        vm = self.get_object()
+        nic = vm.nics.filter(uuid=nic_uuid).first()
+        if nic is None:
+            return Response({"error": {"code": "NOT_FOUND", "message": "nic not found", "details": {}}}, status=404)
+        job = services.detach_nic(vm, nic, request.user)
+        log_from_request(request, action="VM_NIC_DETACH", resource_type="VirtualMachine", resource_id=str(vm.uuid), organization=vm.organization)
+        return Response({"job_id": str(job.uuid), "status": "queued"}, status=status.HTTP_202_ACCEPTED)
+
     @action(detail=True, methods=["get"])
     def console(self, request, uuid=None):
         vm = self.get_object()
@@ -156,6 +219,6 @@ class VirtualMachineViewSet(OrganizationScopedModelViewSet):
             {
                 "websocket_url": f"/ws/console/{vm.uuid}",
                 "protocol": "nodepilot-console-v1",
-                "note": "Connect using the browser session established at login; the relay opens the console on the agent for the duration of the connection.",
+                "note": "Append ?token=<jwt-access-token> to the websocket URL (see apps.authentication.ws_auth); the relay opens the console on the agent for the duration of the connection.",
             }
         )

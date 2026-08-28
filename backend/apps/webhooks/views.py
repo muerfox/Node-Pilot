@@ -4,7 +4,7 @@ from rest_framework.throttling import ScopedRateThrottle
 
 from apps.common.viewsets import OrganizationScopedModelViewSet
 from apps.webhooks.models import Webhook, WebhookDelivery
-from apps.webhooks.serializers import WebhookDeliverySerializer, WebhookSerializer
+from apps.webhooks.serializers import WebhookCreateSerializer, WebhookDeliverySerializer, WebhookSerializer
 
 
 class WebhookViewSet(OrganizationScopedModelViewSet):
@@ -17,6 +17,11 @@ class WebhookViewSet(OrganizationScopedModelViewSet):
     }
     filterset_fields = ["enabled"]
     search_fields = ["name", "url"]
+
+    def get_serializer_class(self):
+        if self.action == "create":
+            return WebhookCreateSerializer
+        return WebhookSerializer
 
     def get_throttles(self):
         if self.action in {"create", "update", "partial_update"}:

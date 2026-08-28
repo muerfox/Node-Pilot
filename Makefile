@@ -1,4 +1,4 @@
-.PHONY: help up down logs migrate seed shell backend-test agent-test cli-test test lint fmt build
+.PHONY: help up down logs migrate seed shell backend-test agent-test cli-test frontend-test frontend-dev test lint fmt build
 
 help:
 	@echo "NodePilot -- common development targets:"
@@ -8,10 +8,12 @@ help:
 	@echo "  make migrate        Run Django migrations inside the web container"
 	@echo "  make seed           Seed the RBAC permission catalog"
 	@echo "  make shell          Open a Django shell inside the web container"
+	@echo "  make frontend-dev   Run the web UI dev server (http://localhost:5173)"
 	@echo "  make backend-test   Run backend/ pytest suite (host Python, sqlite)"
 	@echo "  make agent-test     Run agent/ pytest suite"
 	@echo "  make cli-test       Run cli/ pytest suite"
-	@echo "  make test           Run all three test suites"
+	@echo "  make frontend-test  Typecheck + lint + build the web UI"
+	@echo "  make test           Run all four test suites"
 
 up:
 	docker compose up --build
@@ -31,6 +33,9 @@ seed:
 shell:
 	docker compose exec nodepilot-web python manage.py shell
 
+frontend-dev:
+	cd frontend && npm install && npm run dev
+
 backend-test:
 	cd backend && DJANGO_SETTINGS_MODULE=config.settings.test python -m pytest
 
@@ -40,4 +45,7 @@ agent-test:
 cli-test:
 	cd cli && python -m pytest
 
-test: backend-test agent-test cli-test
+frontend-test:
+	cd frontend && npm install && npm run typecheck && npm run lint && npm run build
+
+test: backend-test agent-test cli-test frontend-test

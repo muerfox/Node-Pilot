@@ -8,9 +8,9 @@ versioned projects that agree on one contract -- the **Agent Protocol**
                     +------------------------------+
                     |          NodePilot            |
                     |                              |
-                    | Web UI (not built in this    |
-                    |  pass -- see "What's not     |
-                    |  implemented" below)         |
+                    | Web UI (React/TypeScript,     |
+                    |  frontend/, talks only to     |
+                    |  the REST/WebSocket API)      |
                     | REST API  (Django + DRF)      |
                     | Auth / RBAC                    |
                     | Scheduler / Job System (Celery) |
@@ -100,6 +100,11 @@ cleanup, IPAM allocation, storage-capability-aware snapshots, chunked
 image upload with streaming checksum verification, webhook delivery with
 HMAC signing + exponential backoff, Redis-backed short-term metrics, the
 CLI, and the agent's libvirt/storage/network/cloud-init abstractions.
+The web UI (`frontend/`, React/TypeScript) covers every resource in the
+nav -- dashboard, nodes, VMs (list/wizard/10-tab detail), networks/IPAM,
+storage, images (real chunked upload), templates, jobs, backups, and the
+admin pages -- against the real API, with live job/status updates over
+WebSockets; see `frontend/README.md`.
 
 **Present but intentionally limited (documented, not faked):**
 
@@ -114,10 +119,16 @@ CLI, and the agent's libvirt/storage/network/cloud-init abstractions.
 - **Backup targets**: LOCAL/NFS are implemented end-to-end; S3/MinIO/Ceph
   raise a clear `NotImplementedError` rather than a fake success, since
   they need an object-storage client this pass doesn't ship.
-- **Web UI** (sections 38-42, 65-67): not built in this pass. The backend
-  exposes a complete, documented REST/WebSocket API
-  (`/api/docs/`, `/api/redoc/`) plus a CLI; a frontend can be built
-  against that contract without backend changes. See `frontend/README.md`.
+- **VM console rendering** (section 21): the WebSocket relay all the way
+  through to the agent's VNC socket is real and live, but there is no
+  client-side VNC framebuffer renderer (noVNC) wired in yet -- the
+  Console tab shows connection health/frame counts instead of pretending
+  to render a screen. See `frontend/README.md`.
+- **Per-VM metrics** (section 28): the `/api/v1/metrics/vms/{id}/`
+  endpoint and store are real, but nothing yet pushes per-VM samples into
+  it (only host-level metrics flow through the heartbeat) -- the UI's
+  Metrics tab will show "no metrics yet" until that agent-side loop is
+  added.
 
 Nothing in the implemented paths pretends to succeed when it didn't --
 provisioning failures roll back and clean up partially created resources

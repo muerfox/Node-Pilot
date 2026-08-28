@@ -317,3 +317,103 @@ def clone_vm_task(self, job_id: int, vm_id: int, new_name: str, linked: bool) ->
         if not Job.objects.get(pk=job.pk).is_terminal:
             transition(job, JobStatus.FAILED, error=str(exc))
         raise
+
+
+def _disk_or_nic_task(job_id: int, obj, *, step: str, run_op) -> None:
+    """Shared body for the five standalone disk/NIC hot-plug operations
+    below: hold the storage lock, run one agent op, transition the job,
+    and roll the job to FAILED (never silently) on any error."""
+    job = Job.objects.get(pk=job_id)
+    vm = obj.vm
+    try:
+        with storage_lock(vm):
+            with job_run(job, step):
+                run_op()
+        transition(job, JobStatus.SUCCESS, message=step)
+    except Exception as exc:
+        if not Job.objects.get(pk=job.pk).is_terminal:
+            transition(job, JobStatus.FAILED, error=str(exc))
+        raise
+
+
+@shared_task(bind=True, base=JobBoundTask)
+def attach_disk_task(self, job_id: int, disk_id: int) -> None:
+    disk = VMDisk.objects.select_related("vm", "vm__node", "storage").get(pk=disk_id)
+
+    def run():
+        data = agent_client.send_operation(
+            disk.vm.node, OperationType.CREATE_DISK, resource_id=str(disk.vm.uuid),
+            payload={"disk_uuid": str(disk.uuid), "storage_id": disk.storage_id, "storage_path": disk.storage.path, "storage_type": disk.storage.type, "size_bytes": disk.size_bytes, "format": disk.format},
+        )
+        disk.volume_id = data.get("volume_id", "")
+        disk.device = data.get("device", disk.device)
+        disk.save(update_fields=["volume_id", "device"])
+        agent_client.send_operation(
+            disk.vm.node, OperationType.ATTACH_DISK, resource_id=str(disk.vm.uuid),
+            payload={"domain_uuid": str(disk.vm.domain_uuid), "volume_id": disk.volume_id, "device": disk.device or "vdb", "bus": disk.bus},
+        )
+
+    _disk_or_nic_task(job_id, disk, step=f"Attaching disk {disk.name}", run_op=run)
+
+
+@shared_task(bind=True, base=JobBoundTask)
+def detach_disk_task(self, job_id: int, disk_id: int) -> None:
+    disk = VMDisk.objects.select_related("vm", "vm__node", "storage").get(pk=disk_id)
+    disk_uuid, vm = disk.uuid, disk.vm
+
+    def run():
+        agent_client.send_operation(
+            vm.node, OperationType.DETACH_DISK, resource_id=str(vm.uuid),
+            payload={"domain_uuid": str(vm.domain_uuid), "volume_id": disk.volume_id, "device": disk.device, "bus": disk.bus},
+        )
+        if disk.volume_id:
+            agent_client.send_operation(
+                vm.node, OperationType.DELETE_DISK, resource_id=str(vm.uuid),
+                payload={"volume_id": disk.volume_id, "storage_id": disk.storage_id, "storage_type": disk.storage.type, "storage_path": disk.storage.path},
+            )
+        disk.delete()
+
+    _disk_or_nic_task(job_id, disk, step=f"Detaching disk {disk_uuid}", run_op=run)
+
+
+@shared_task(bind=True, base=JobBoundTask)
+def resize_disk_task(self, job_id: int, disk_id: int, new_size_bytes: int) -> None:
+    disk = VMDisk.objects.select_related("vm", "vm__node", "storage").get(pk=disk_id)
+
+    def run():
+        agent_client.send_operation(
+            disk.vm.node, OperationType.RESIZE_DISK, resource_id=str(disk.vm.uuid),
+            payload={"volume_id": disk.volume_id, "storage_id": disk.storage_id, "storage_type": disk.storage.type, "storage_path": disk.storage.path, "new_size_bytes": new_size_bytes},
+        )
+        disk.size_bytes = new_size_bytes
+        disk.save(update_fields=["size_bytes"])
+
+    _disk_or_nic_task(job_id, disk, step=f"Resizing disk {disk.name}", run_op=run)
+
+
+@shared_task(bind=True, base=JobBoundTask)
+def attach_nic_task(self, job_id: int, nic_id: int) -> None:
+    nic = VMNic.objects.select_related("vm", "vm__node", "network").get(pk=nic_id)
+
+    def run():
+        agent_client.send_operation(
+            nic.vm.node, OperationType.ATTACH_NIC, resource_id=str(nic.vm.uuid),
+            payload={"domain_uuid": str(nic.vm.domain_uuid), "bridge": nic.network.bridge, "mac_address": nic.mac_address, "model": nic.model},
+        )
+
+    _disk_or_nic_task(job_id, nic, step=f"Attaching NIC {nic.mac_address}", run_op=run)
+
+
+@shared_task(bind=True, base=JobBoundTask)
+def detach_nic_task(self, job_id: int, nic_id: int) -> None:
+    nic = VMNic.objects.select_related("vm", "vm__node", "network").get(pk=nic_id)
+    mac, vm = nic.mac_address, nic.vm
+
+    def run():
+        agent_client.send_operation(
+            vm.node, OperationType.DETACH_NIC, resource_id=str(vm.uuid),
+            payload={"domain_uuid": str(vm.domain_uuid), "bridge": nic.network.bridge, "mac_address": nic.mac_address, "model": nic.model},
+        )
+        nic.delete()
+
+    _disk_or_nic_task(job_id, nic, step=f"Detaching NIC {mac}", run_op=run)
