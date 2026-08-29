@@ -8,6 +8,7 @@ import type {
   Image,
   IPAddress,
   Job,
+  Membership,
   Node,
   NodePilotEvent,
   NodePilotNetwork,
@@ -16,11 +17,13 @@ import type {
   Project,
   Quota,
   Role,
+  RoleAssignment,
   Snapshot,
   StoragePool,
   Subnet,
   Template,
   User,
+  UserLookupResult,
   VirtualMachine,
   Webhook,
 } from "@/types/api";
@@ -49,6 +52,7 @@ export const quotas = {
 export const users = {
   me: () => api.get<User>("users/me/"),
   list: (params?: Params) => api.get<Paginated<User>>("users/", params),
+  lookup: (username: string) => api.get<UserLookupResult>("users/lookup/", { username }),
 };
 
 export const apiTokens = {
@@ -59,6 +63,18 @@ export const apiTokens = {
 
 export const roles = {
   list: (params?: Params) => api.get<Paginated<Role>>("roles/", params),
+};
+
+export const memberships = {
+  list: (params?: Params) => api.get<Paginated<Membership>>("memberships/", params),
+  create: (body: { organization: string; user: string }) => api.post<Membership>("memberships/", body),
+  remove: (uuid: string) => api.delete(`memberships/${uuid}/`),
+};
+
+export const roleAssignments = {
+  list: (params?: Params) => api.get<Paginated<RoleAssignment>>("role-assignments/", params),
+  create: (body: { organization: string; project?: string | null; user: string; role: string }) => api.post<RoleAssignment>("role-assignments/", body),
+  remove: (uuid: string) => api.delete(`role-assignments/${uuid}/`),
 };
 
 export const nodes = {

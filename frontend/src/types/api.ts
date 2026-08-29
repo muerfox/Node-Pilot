@@ -385,3 +385,24 @@ export interface Role {
   permissions: string[];
   is_system: boolean;
 }
+
+export interface Membership {
+  uuid: string;
+  organization: string;
+  user: string;
+  created_at: string;
+}
+
+export interface RoleAssignment {
+  uuid: string;
+  user: string;
+  organization: string;
+  project: string | null;
+  role: string;
+  created_at: string;
+}
+
+export interface UserLookupResult {
+  uuid: string;
+  username: string;
+}

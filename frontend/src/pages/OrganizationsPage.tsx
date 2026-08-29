@@ -9,8 +9,9 @@ import PageHeader from "@/components/PageHeader";
 import { FullPageSpinner } from "@/components/Spinner";
 import StatusBadge from "@/components/StatusBadge";
 import { organizations, projects } from "@/lib/resources";
+import AccessTab from "@/pages/AccessTab";
 
-const SUBTABS = ["Organizations", "Projects"] as const;
+const SUBTABS = ["Organizations", "Projects", "Access"] as const;
 
 export default function OrganizationsPage() {
   const [tab, setTab] = useState<(typeof SUBTABS)[number]>("Organizations");
@@ -21,9 +22,11 @@ export default function OrganizationsPage() {
       <PageHeader
         title="Organizations"
         actions={
-          <button className="btn-primary" onClick={() => setShowCreate(true)}>
-            + New {tab === "Organizations" ? "organization" : "project"}
-          </button>
+          tab === "Access" ? undefined : (
+            <button className="btn-primary" onClick={() => setShowCreate(true)}>
+              + New {tab === "Organizations" ? "organization" : "project"}
+            </button>
+          )
         }
       />
 
@@ -37,6 +40,7 @@ export default function OrganizationsPage() {
 
       {tab === "Organizations" && <OrganizationsList />}
       {tab === "Projects" && <ProjectsList />}
+      {tab === "Access" && <AccessTab />}
 
       {showCreate && tab === "Organizations" && <CreateOrgModal onClose={() => setShowCreate(false)} />}
       {showCreate && tab === "Projects" && <CreateProjectModal onClose={() => setShowCreate(false)} />}

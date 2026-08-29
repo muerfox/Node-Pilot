@@ -132,9 +132,24 @@ export const api = {
   delete: <T>(path: string) => rawRequest<T>(path, { method: "DELETE" }),
 };
 
-export function wsUrl(path: string): string {
+function wsBaseUrl(path: string): URL {
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-  const url = new URL(path, `${proto}//${window.location.host}`);
-  if (accessToken) url.searchParams.set("token", accessToken);
+  return new URL(path, `${proto}//${window.location.host}`);
+}
+
+/**
+ * A browser's WebSocket API can't attach an Authorization header to the
+ * handshake, and the JWT access token itself is too sensitive to put in
+ * a URL (proxy/server access logs). So this exchanges it for a
+ * short-lived, single-use ticket (POST /auth/ws-ticket/, an ordinary
+ * authenticated HTTPS request that *does* support headers) and returns
+ * the WS URL with that ticket instead -- see
+ * backend/apps/authentication/ws_ticket.py. Call this fresh for every
+ * connection attempt, including reconnects: a ticket is single-use.
+ */
+export async function authenticatedWsUrl(path: string): Promise<string> {
+  const { ticket } = await api.post<{ ticket: string; expires_in: number }>("auth/ws-ticket/");
+  const url = wsBaseUrl(path);
+  url.searchParams.set("ticket", ticket);
   return url.toString();
 }

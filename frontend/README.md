@@ -57,9 +57,12 @@ deltas, never fabricated) via `/api/v1/agent/vm-metrics/`.
 - JWT access/refresh via `/api/v1/auth/login/` and `/api/v1/auth/refresh/`.
   Access token lives in memory only; refresh token in `localStorage`
   (the backend has no httpOnly-cookie delivery path for it).
-- WebSocket connections authenticate via a `?token=` query parameter
-  carrying the same access token -- see
-  `../backend/apps/authentication/ws_auth.py`.
+- WebSocket connections authenticate via a `?ticket=` query parameter --
+  never the JWT itself, to keep it out of proxy/server access logs.
+  `authenticatedWsUrl()` (`src/lib/api.ts`) exchanges the access token
+  for a short-lived, single-use ticket over an ordinary authenticated
+  HTTPS POST first; see `../backend/apps/authentication/ws_ticket.py`
+  and `ws_auth.py`.
 
 ## Design
 

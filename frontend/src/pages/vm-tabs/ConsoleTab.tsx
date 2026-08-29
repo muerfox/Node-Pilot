@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 import ErrorBanner from "@/components/ErrorBanner";
 import { FullPageSpinner } from "@/components/Spinner";
-import { wsUrl } from "@/lib/api";
+import { authenticatedWsUrl } from "@/lib/api";
 import { vms } from "@/lib/resources";
 
 type ConnState = "idle" | "connecting" | "connected" | "disconnected" | "error";
@@ -28,14 +28,10 @@ export default function ConsoleTab({ vmUuid, vmStatus }: { vmUuid: string; vmSta
   useEffect(() => {
     if (!consoleQuery.data || !containerRef.current) return undefined;
 
+    let cancelled = false;
+    let rfb: RFB | null = null;
     setState("connecting");
     setMessage(null);
-
-    const rfb = new RFB(containerRef.current, wsUrl(consoleQuery.data.websocket_url), {});
-    rfb.scaleViewport = true;
-    rfb.showDotCursor = true;
-    rfb.viewOnly = false;
-    rfbRef.current = rfb;
 
     const onConnect = () => setState("connected");
     const onDisconnect = (event: CustomEvent<{ clean: boolean }>) => {
@@ -54,17 +50,40 @@ export default function ConsoleTab({ vmUuid, vmStatus }: { vmUuid: string; vmSta
       setMessage("The VNC server is asking for credentials this console session doesn't have.");
     };
 
-    rfb.addEventListener("connect", onConnect);
-    rfb.addEventListener("disconnect", onDisconnect as EventListener);
-    rfb.addEventListener("securityfailure", onSecurityFailure as EventListener);
-    rfb.addEventListener("credentialsrequired", onCredentialsRequired);
+    (async () => {
+      let url: string;
+      try {
+        url = await authenticatedWsUrl(consoleQuery.data!.websocket_url);
+      } catch {
+        if (!cancelled) {
+          setState("error");
+          setMessage("Could not obtain a console session ticket.");
+        }
+        return;
+      }
+      if (cancelled || !containerRef.current) return;
+
+      rfb = new RFB(containerRef.current, url, {});
+      rfb.scaleViewport = true;
+      rfb.showDotCursor = true;
+      rfb.viewOnly = false;
+      rfbRef.current = rfb;
+
+      rfb.addEventListener("connect", onConnect);
+      rfb.addEventListener("disconnect", onDisconnect as EventListener);
+      rfb.addEventListener("securityfailure", onSecurityFailure as EventListener);
+      rfb.addEventListener("credentialsrequired", onCredentialsRequired);
+    })();
 
     return () => {
-      rfb.removeEventListener("connect", onConnect);
-      rfb.removeEventListener("disconnect", onDisconnect as EventListener);
-      rfb.removeEventListener("securityfailure", onSecurityFailure as EventListener);
-      rfb.removeEventListener("credentialsrequired", onCredentialsRequired);
-      rfb.disconnect();
+      cancelled = true;
+      if (rfb) {
+        rfb.removeEventListener("connect", onConnect);
+        rfb.removeEventListener("disconnect", onDisconnect as EventListener);
+        rfb.removeEventListener("securityfailure", onSecurityFailure as EventListener);
+        rfb.removeEventListener("credentialsrequired", onCredentialsRequired);
+        rfb.disconnect();
+      }
       rfbRef.current = null;
     };
   }, [consoleQuery.data]);

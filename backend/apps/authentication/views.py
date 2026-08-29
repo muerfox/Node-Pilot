@@ -2,12 +2,14 @@ from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
+from rest_framework.views import APIView
 from rest_framework.viewsets import ModelViewSet
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from apps.audit.services import log_from_request
 from apps.authentication.models import APIToken
 from apps.authentication.serializers import APITokenCreateSerializer, APITokenSerializer
+from apps.authentication.ws_ticket import TICKET_TTL_SECONDS, issue_ticket
 
 
 class LoginView(TokenObtainPairView):
@@ -22,6 +24,20 @@ class RefreshView(TokenRefreshView):
     permission_classes = [AllowAny]
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = "login"
+
+
+class WSTicketView(APIView):
+    """
+    POST /api/v1/auth/ws-ticket/ -- exchanges the caller's existing
+    authenticated session (JWT or API token, checked via the normal
+    Authorization header) for a short-lived, single-use ticket suitable
+    for putting in a WebSocket URL. See apps.authentication.ws_ticket.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        return Response({"ticket": issue_ticket(request.user), "expires_in": TICKET_TTL_SECONDS})
 
 
 class APITokenViewSet(ModelViewSet):

@@ -31,7 +31,7 @@ class UserViewSet(ModelViewSet):
         return UserSerializer
 
     def get_permissions(self):
-        if self.action == "me":
+        if self.action in ("me", "lookup"):
             return [IsAuthenticated()]
         return [IsAuthenticated(), IsAdminUser()]
 
@@ -43,3 +43,23 @@ class UserViewSet(ModelViewSet):
     @action(detail=False, methods=["get"])
     def me(self, request):
         return Response(UserSerializer(request.user).data)
+
+    @action(detail=False, methods=["get"])
+    def lookup(self, request):
+        """
+        GET /users/lookup/?username=<exact> -- open to any authenticated
+        user (not just staff), unlike list/retrieve/create, so an org
+        admin adding a Membership or RoleAssignment can resolve a
+        username to a uuid without needing platform-wide user.view.
+        Exact match only (no partial `search`), so this can't be used to
+        enumerate/browse the user list -- it only confirms a username you
+        already know resolves to an account, the same information a login
+        form already reveals.
+        """
+        username = request.query_params.get("username", "").strip()
+        if not username:
+            return Response({"error": {"code": "VALIDATION_FAILED", "message": "username is required", "details": {}}}, status=400)
+        user = User.objects.filter(username=username, is_active=True).first()
+        if user is None:
+            return Response({"error": {"code": "NOT_FOUND", "message": "No active user with that username.", "details": {}}}, status=404)
+        return Response({"uuid": str(user.uuid), "username": user.username})

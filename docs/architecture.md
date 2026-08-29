@@ -182,15 +182,16 @@ handling) found and fixed four real issues, each with a regression test:
   `_assert_within_*` pattern DirectoryBackend already uses.
   `agent/tests/test_storage_scope_checks.py`.
 
-One item was investigated and intentionally left as-is: the frontend
-carries the JWT access token as a `?token=` query parameter on WebSocket
-URLs (`wsUrl()` in `frontend/src/lib/api.ts`) rather than a header,
-since browsers can't attach custom headers to a WebSocket handshake. A
-`new WebSocket(url)` call isn't a navigation, so the usual
-history/Referer leak paths for "secrets in URLs" don't apply here -- the
-one real remaining exposure is the token appearing in server/proxy
-access logs on the WS upgrade request (the example
-`deployment/nginx/nodepilot.conf` doesn't currently scrub it). Worth
-hardening later (e.g. a short-lived one-time ticket exchanged over the
-already-authenticated HTTPS channel, or carrying the token in
-`Sec-WebSocket-Protocol` instead), but not urgent enough to block on.
+A fifth item was investigated as a lower-severity concern in that same
+review and has since been closed: the frontend used to carry the raw JWT
+access token as a `?token=` query parameter on WebSocket URLs (browsers
+can't attach custom headers to a WS handshake), which risked the token
+appearing in server/proxy access logs on the WS upgrade request. Fixed
+by exchanging the JWT for a short-lived (30s), single-use ticket over an
+ordinary authenticated HTTPS POST first
+(`apps/authentication/ws_ticket.py`,
+`POST /api/v1/auth/ws-ticket/`) and putting *that* in the WS URL instead
+-- `apps/authentication/ws_auth.py`'s Channels middleware redeems it
+atomically (a Lua GET-then-DELETE), so even a leaked ticket is useless
+after the one legitimate connection it was issued for.
+`tests/test_ws_ticket.py`.
