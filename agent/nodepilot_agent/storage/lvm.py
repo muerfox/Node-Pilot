@@ -21,15 +21,32 @@ def _validate_name(name: str) -> str:
 class LVMBackend(StorageBackend):
     """`pool_path` is the volume group name, e.g. "vg-data"."""
 
+    def _assert_within_vg(self, volume_id: str) -> None:
+        """
+        `DirectoryBackend` refuses to touch a path outside its own pool
+        (`_assert_within_pool`); this is the equivalent guard for LVM --
+        without it, a `volume_id` referencing a *different* volume group
+        (VMDisk.volume_id is only ever set from the agent's own
+        CREATE_DISK response under normal operation, but this is the
+        agent's own last line of defense against a bug elsewhere, or a
+        compromised controller, sending a DELETE_DISK/RESIZE_DISK for an
+        LV this pool doesn't own) would be deleted/resized outright.
+        """
+        vg = volume_id.split("/", 1)[0]
+        if vg != self.pool_path:
+            raise StorageOperationError(f"Refusing to operate on a volume outside this pool's volume group: {volume_id!r}")
+
     def create_volume(self, name: str, size_bytes: int, *, format: str = "raw") -> VolumeInfo:
         name = _validate_name(name)
         run(["lvcreate", "-y", "-L", f"{size_bytes}B", "-n", name, self.pool_path])
         return VolumeInfo(volume_id=f"{self.pool_path}/{name}", size_bytes=size_bytes, format="raw")
 
     def delete_volume(self, volume_id: str) -> None:
+        self._assert_within_vg(volume_id)
         run(["lvremove", "-f", volume_id])
 
     def resize_volume(self, volume_id: str, new_size_bytes: int) -> None:
+        self._assert_within_vg(volume_id)
         run(["lvextend", "-L", f"{new_size_bytes}B", volume_id])
 
     def clone_volume(self, source_volume_id: str, new_name: str, *, linked: bool = False) -> VolumeInfo:

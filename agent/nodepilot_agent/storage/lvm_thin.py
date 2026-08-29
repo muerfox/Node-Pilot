@@ -24,15 +24,26 @@ class LVMThinBackend(StorageBackend):
         if not self.thinpool:
             raise StorageOperationError(f"LVM-thin pool_path must be 'vg/thinpool', got {pool_path!r}")
 
+    def _assert_within_vg(self, volume_id: str) -> None:
+        """Mirrors DirectoryBackend._assert_within_pool -- the agent's own
+        last line of defense against deleting/resizing an LV outside this
+        pool's volume group (see LVMBackend._assert_within_vg for the
+        full rationale)."""
+        vg = volume_id.split("/", 1)[0]
+        if vg != self.vg:
+            raise StorageOperationError(f"Refusing to operate on a volume outside this pool's volume group: {volume_id!r}")
+
     def create_volume(self, name: str, size_bytes: int, *, format: str = "raw") -> VolumeInfo:
         name = _validate_name(name)
         run(["lvcreate", "-y", "-T", f"{self.vg}/{self.thinpool}", "-V", f"{size_bytes}B", "-n", name])
         return VolumeInfo(volume_id=f"{self.vg}/{name}", size_bytes=size_bytes, format="raw")
 
     def delete_volume(self, volume_id: str) -> None:
+        self._assert_within_vg(volume_id)
         run(["lvremove", "-f", volume_id])
 
     def resize_volume(self, volume_id: str, new_size_bytes: int) -> None:
+        self._assert_within_vg(volume_id)
         run(["lvextend", "-L", f"{new_size_bytes}B", volume_id])
 
     def clone_volume(self, source_volume_id: str, new_name: str, *, linked: bool = False) -> VolumeInfo:

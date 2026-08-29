@@ -3,10 +3,24 @@ string/XML generation -- no libvirt or subprocess calls here, so it's
 trivially unit-testable."""
 from __future__ import annotations
 
-from xml.sax.saxutils import escape
+from xml.sax.saxutils import escape as _sax_escape
 
 _BUS_DEVICE_PREFIX = {"VIRTIO": "vd", "VIRTIO_SCSI": "sd", "SATA": "sd", "IDE": "hd"}
 _BUS_XML_NAME = {"VIRTIO": "virtio", "VIRTIO_SCSI": "scsi", "SATA": "sata", "IDE": "ide"}
+
+
+def escape(value: str) -> str:
+    """
+    Every value built into this module's XML lands inside a
+    double-quoted attribute somewhere (or is safe to over-escape if it
+    doesn't). `xml.sax.saxutils.escape`'s default entity set only covers
+    `&`/`<`/`>` -- NOT quotes -- so a controller-supplied value containing
+    a literal `"` (e.g. a StoragePool.path or Network.bridge an
+    org-scoped user can set via the normal API) could break out of an
+    attribute and inject arbitrary elements into the domain XML libvirt
+    ends up defining. Always escape quotes too.
+    """
+    return _sax_escape(value, {'"': "&quot;", "'": "&apos;"})
 
 
 def _next_device_name(prefix: str, index: int) -> str:

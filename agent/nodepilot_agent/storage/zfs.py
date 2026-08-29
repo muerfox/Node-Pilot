@@ -19,6 +19,20 @@ class ZFSBackend(StorageBackend):
     """`pool_path` is the ZFS dataset prefix volumes are created under,
     e.g. "tank/nodepilot"."""
 
+    def _assert_within_pool(self, dataset: str) -> None:
+        """
+        Mirrors DirectoryBackend._assert_within_pool -- the agent's own
+        last line of defense against a `volume_id` outside this pool's
+        dataset tree (see LVMBackend._assert_within_vg for the full
+        rationale). Matters even more here than for LVM: `zfs destroy` is
+        called with `-r` (recursive), so an unscoped call against
+        `self.pool_path` itself -- not just some unrelated dataset --
+        would destroy this entire pool's dataset tree in one shot.
+        """
+        prefix = f"{self.pool_path}/"
+        if dataset == self.pool_path or not dataset.startswith(prefix):
+            raise StorageOperationError(f"Refusing to operate on a dataset outside this pool: {dataset!r}")
+
     def create_volume(self, name: str, size_bytes: int, *, format: str = "raw") -> VolumeInfo:
         name = _validate_name(name)
         dataset = f"{self.pool_path}/{name}"
@@ -26,9 +40,11 @@ class ZFSBackend(StorageBackend):
         return VolumeInfo(volume_id=dataset, size_bytes=size_bytes, format="raw")
 
     def delete_volume(self, volume_id: str) -> None:
+        self._assert_within_pool(volume_id)
         run(["zfs", "destroy", "-r", volume_id])
 
     def resize_volume(self, volume_id: str, new_size_bytes: int) -> None:
+        self._assert_within_pool(volume_id)
         run(["zfs", "set", f"volsize={new_size_bytes}", volume_id])
 
     def clone_volume(self, source_volume_id: str, new_name: str, *, linked: bool = False) -> VolumeInfo:

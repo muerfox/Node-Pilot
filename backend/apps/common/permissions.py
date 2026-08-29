@@ -53,7 +53,7 @@ class HasResourcePermission(BasePermission):
         codename = self._resolve_codename(view)
         if codename is None:
             return False
-        organization = getattr(obj, "organization", None) or self._resolve_organization(request, view)
+        organization = self._resolve_organization_from_object(view, obj)
         from apps.permissions.policies import has_permission
 
         return has_permission(request.user, organization, codename)
@@ -64,6 +64,28 @@ class HasResourcePermission(BasePermission):
         if permission_map:
             return permission_map.get(view.action)
         return getattr(view, "required_permission", None)
+
+    @staticmethod
+    def _resolve_organization_from_object(view, obj):
+        """
+        Derived strictly from the object already in hand -- walking
+        `view.organization_field_path` (default "organization") against
+        `obj` itself -- and NEVER from client-supplied query params or
+        request body. Object-level checks used to fall back to
+        `?organization=<uuid>` when `obj` had no direct `organization`
+        field (true of StoragePool, Network, Subnet, IPAddress, IPPool,
+        Snapshot, Backup, ...), which let an authenticated member of org
+        A "borrow" a permission grant they hold in an unrelated org B by
+        passing `?organization=<org-B-uuid>` on a request targeting an
+        object that actually belongs to org A -- a cross-tenant IDOR.
+        """
+        path = getattr(view, "organization_field_path", "organization")
+        target = obj
+        for part in path.split("__"):
+            target = getattr(target, part, None)
+            if target is None:
+                return None
+        return target
 
     @staticmethod
     def _resolve_organization(request, view):

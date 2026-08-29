@@ -132,3 +132,65 @@ Nothing in the implemented paths pretends to succeed when it didn't --
 provisioning failures roll back and clean up partially created resources
 and surface through the Job's `error` field; disabled backend types raise
 instead of silently no-op'ing.
+
+## Security review findings and fixes
+
+A four-way security review (backend auth/RBAC, the agent's subprocess/
+file handling, upload/webhook/SSRF surfaces, and frontend token
+handling) found and fixed four real issues, each with a regression test:
+
+- **Cross-tenant IDOR** (`apps/common/permissions.py`): object-level
+  permission checks used to fall back to a client-supplied
+  `?organization=` query parameter whenever the target object had no
+  *direct* `organization` field (true of StoragePool, Network, Subnet,
+  IPAddress, IPPool, Snapshot, Backup). A user who was merely a Member of
+  org A -- with no write permission there -- could act on an org-A
+  object by passing `?organization=<org-B-uuid>` for an unrelated org B
+  where they *did* hold the permission. Fixed by deriving the
+  organization strictly from the object itself
+  (`_resolve_organization_from_object`), never from the request.
+  `tests/test_cross_tenant_authorization.py`.
+- **Webhook SSRF via redirect** (`apps/webhooks/tasks.py`): the
+  private/loopback/link-local host check on a webhook URL
+  (`_is_private_host`) only ran at creation time; `requests.post`
+  follows redirects by default, so a webhook target that later responded
+  with a 3xx to an internal address (cloud metadata, localhost services)
+  made that check purely cosmetic. Fixed with `allow_redirects=False`.
+  `tests/test_webhook_delivery.py`. (DNS rebinding between validation and
+  delivery is a related, lower-severity gap that isn't closed yet --
+  would need re-resolving and re-validating the host immediately before
+  each delivery attempt.)
+- **XML attribute injection** (`agent/nodepilot_agent/domain_xml.py`):
+  `xml.sax.saxutils.escape()`'s default entity set covers `&`/`<`/`>`
+  only, not quotes -- every value here lands inside a double-quoted XML
+  attribute, so a `StoragePool.path` or `Network.bridge` containing a
+  literal `"` (both settable by an authenticated user with
+  `storage.manage`/`network.manage`, no controller compromise needed)
+  could break out and inject an arbitrary sibling element into the
+  domain XML libvirt goes on to define -- e.g. a second `<disk>` exposing
+  an arbitrary host path to the guest. Fixed by escaping quotes too.
+  `agent/tests/test_domain_xml.py`.
+- **Missing pool-scope check on LVM/LVM-thin/ZFS volume operations**
+  (`agent/nodepilot_agent/storage/{lvm,lvm_thin,zfs}.py`):
+  `DirectoryBackend` already refuses to delete/resize a path outside its
+  own pool; the block-storage backends had no equivalent guard before
+  calling `lvremove`/`lvextend`/`zfs destroy -r`/`zfs set`. Requires a
+  bug elsewhere or a compromised controller (a `VMDisk.volume_id` is
+  otherwise only ever set from the agent's own CREATE_DISK response, not
+  directly by a platform user) but is a real defense-in-depth gap,
+  particularly for ZFS's recursive `destroy -r`. Fixed with the same
+  `_assert_within_*` pattern DirectoryBackend already uses.
+  `agent/tests/test_storage_scope_checks.py`.
+
+One item was investigated and intentionally left as-is: the frontend
+carries the JWT access token as a `?token=` query parameter on WebSocket
+URLs (`wsUrl()` in `frontend/src/lib/api.ts`) rather than a header,
+since browsers can't attach custom headers to a WebSocket handshake. A
+`new WebSocket(url)` call isn't a navigation, so the usual
+history/Referer leak paths for "secrets in URLs" don't apply here -- the
+one real remaining exposure is the token appearing in server/proxy
+access logs on the WS upgrade request (the example
+`deployment/nginx/nodepilot.conf` doesn't currently scrub it). Worth
+hardening later (e.g. a short-lived one-time ticket exchanged over the
+already-authenticated HTTPS channel, or carrying the token in
+`Sec-WebSocket-Protocol` instead), but not urgent enough to block on.

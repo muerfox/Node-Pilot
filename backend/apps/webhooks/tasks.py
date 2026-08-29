@@ -42,6 +42,14 @@ def deliver_webhook(self, delivery_id: int) -> None:
                 "X-NodePilot-Delivery": str(delivery.uuid),
             },
             timeout=REQUEST_TIMEOUT_SECONDS,
+            # WebhookSerializer.validate_url only rejects private/loopback/
+            # link-local hosts at creation time -- following a redirect
+            # here would let a webhook target (or anyone able to make it
+            # respond with a 3xx, e.g. an open redirector) point this
+            # server-side request at an internal address after the fact,
+            # making the create-time check purely cosmetic. A legitimate
+            # receiver has no need to redirect a webhook delivery.
+            allow_redirects=False,
         )
         delivery.response_status = response.status_code
         delivery.response_body = response.text[:2000]
