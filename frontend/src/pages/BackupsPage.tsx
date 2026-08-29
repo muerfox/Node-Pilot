@@ -155,15 +155,38 @@ function TargetsList() {
   );
 }
 
+const _S3_LIKE_TYPES: BackupTarget["type"][] = ["S3", "MINIO", "CEPH"];
+
 function AddTargetModal({ onClose }: { onClose: () => void }) {
   const queryClient = useQueryClient();
   const [organization, setOrganization] = useState("");
   const [name, setName] = useState("");
   const [type, setType] = useState<BackupTarget["type"]>("LOCAL");
+
+  // LOCAL/NFS
   const [path, setPath] = useState("");
 
+  // S3/MinIO/Ceph (RGW) -- all speak the S3 API, endpointUrl is what
+  // tells them apart from real AWS S3 (leave blank for real S3).
+  const [bucket, setBucket] = useState("");
+  const [endpointUrl, setEndpointUrl] = useState("");
+  const [region, setRegion] = useState("us-east-1");
+  const [prefix, setPrefix] = useState("nodepilot-backups");
+  const [accessKeyId, setAccessKeyId] = useState("");
+  const [secretAccessKey, setSecretAccessKey] = useState("");
+
+  const isS3Like = _S3_LIKE_TYPES.includes(type);
+
   const mutation = useMutation({
-    mutationFn: () => backupTargets.create({ organization, name, type, config: { path } }),
+    mutationFn: () =>
+      backupTargets.create({
+        organization,
+        name,
+        type,
+        config: isS3Like
+          ? { bucket, endpoint_url: endpointUrl || undefined, region, prefix, access_key_id: accessKeyId, secret_access_key: secretAccessKey }
+          : { path },
+      }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["backup-targets", "all"] });
       onClose();
@@ -192,15 +215,50 @@ function AddTargetModal({ onClose }: { onClose: () => void }) {
           <select className="input" value={type} onChange={(e) => setType(e.target.value as BackupTarget["type"])}>
             <option value="LOCAL">Local</option>
             <option value="NFS">NFS</option>
-            <option value="S3">S3 (not yet implemented by the agent)</option>
-            <option value="MINIO">MinIO (not yet implemented by the agent)</option>
-            <option value="CEPH">Ceph (not yet implemented by the agent)</option>
+            <option value="S3">S3</option>
+            <option value="MINIO">MinIO</option>
+            <option value="CEPH">Ceph (RGW, S3-compatible)</option>
           </select>
         </div>
-        <div>
-          <label className="label">Path</label>
-          <input className="input" required value={path} onChange={(e) => setPath(e.target.value)} placeholder="/var/lib/nodepilot/backups" />
-        </div>
+
+        {!isS3Like && (
+          <div>
+            <label className="label">Path</label>
+            <input className="input" required value={path} onChange={(e) => setPath(e.target.value)} placeholder="/var/lib/nodepilot/backups" />
+          </div>
+        )}
+
+        {isS3Like && (
+          <>
+            <div>
+              <label className="label">Bucket</label>
+              <input className="input" required value={bucket} onChange={(e) => setBucket(e.target.value)} placeholder="nodepilot-backups" />
+            </div>
+            {type !== "S3" && (
+              <div>
+                <label className="label">Endpoint URL</label>
+                <input className="input" required value={endpointUrl} onChange={(e) => setEndpointUrl(e.target.value)} placeholder="https://minio.example.com" />
+              </div>
+            )}
+            <div>
+              <label className="label">Region</label>
+              <input className="input" value={region} onChange={(e) => setRegion(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Key prefix</label>
+              <input className="input" value={prefix} onChange={(e) => setPrefix(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Access key ID</label>
+              <input className="input" required value={accessKeyId} onChange={(e) => setAccessKeyId(e.target.value)} />
+            </div>
+            <div>
+              <label className="label">Secret access key</label>
+              <input className="input" required type="password" value={secretAccessKey} onChange={(e) => setSecretAccessKey(e.target.value)} />
+            </div>
+          </>
+        )}
+
         <ErrorBanner error={mutation.error} />
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" className="btn-secondary" onClick={onClose}>

@@ -1,6 +1,6 @@
 import xml.etree.ElementTree as ET
 
-from nodepilot_agent.domain_xml import build_cdrom_xml, build_domain_xml, build_nic_xml
+from nodepilot_agent.domain_xml import build_cdrom_xml, build_disk_xml, build_domain_xml, build_nic_xml
 
 
 def test_build_domain_xml_is_well_formed_and_has_expected_shape():
@@ -96,3 +96,70 @@ def test_build_nic_xml_escapes_embedded_quote_in_bridge():
     xml_str = build_nic_xml(bridge='vmbr0" x="y', mac_address="52:54:00:11:22:33", model="VIRTIO")
     root = ET.fromstring(xml_str)
     assert root.find("source").get("bridge") == 'vmbr0" x="y'  # round-trips as data, not structure
+
+
+def test_directory_backed_disk_uses_file_type_and_requested_format():
+    payload = {
+        "domain_uuid": "66666666-6666-6666-6666-666666666666", "name": "vm", "memory_mb": 512,
+        "cpu": {"count": 1}, "firmware": "BIOS", "machine_type": "q35",
+        "disks": [{"volume_id": "/pools/local/disk.qcow2", "bus": "VIRTIO", "device": "vda", "storage_type": "DIRECTORY", "format": "qcow2"}],
+        "nics": [],
+    }
+    root = ET.fromstring(build_domain_xml(payload))
+    disk = root.find(".//disk")
+    assert disk.get("type") == "file"
+    assert disk.find("source").get("file") == "/pools/local/disk.qcow2"
+    assert disk.find("source").get("dev") is None
+    assert disk.find("driver").get("type") == "qcow2"
+
+
+def test_lvm_backed_disk_uses_block_type_and_raw_format_even_if_qcow2_was_requested():
+    """LVM/LVM-thin/ZFS volumes are raw block devices -- the domain XML
+    must say so regardless of what format was originally requested when
+    the disk was created (a storage backend that can't do qcow2 always
+    wins; see agent's disk_ops.create_disk / backend's
+    apps.virtual_machines.tasks provision_vm CREATE_DISK step)."""
+    payload = {
+        "domain_uuid": "77777777-7777-7777-7777-777777777777", "name": "vm", "memory_mb": 512,
+        "cpu": {"count": 1}, "firmware": "BIOS", "machine_type": "q35",
+        "disks": [{"volume_id": "vg-data/disk1", "bus": "VIRTIO", "device": "vda", "storage_type": "LVM", "format": "raw"}],
+        "nics": [],
+    }
+    root = ET.fromstring(build_domain_xml(payload))
+    disk = root.find(".//disk")
+    assert disk.get("type") == "block"
+    assert disk.find("source").get("dev") == "vg-data/disk1"
+    assert disk.find("source").get("file") is None
+    assert disk.find("driver").get("type") == "raw"
+
+
+def test_zfs_and_lvm_thin_are_also_treated_as_block_backed():
+    for storage_type in ("ZFS", "LVM_THIN"):
+        payload = {
+            "domain_uuid": "88888888-8888-8888-8888-888888888888", "name": "vm", "memory_mb": 512,
+            "cpu": {"count": 1}, "firmware": "BIOS", "machine_type": "q35",
+            "disks": [{"volume_id": "pool/disk", "bus": "VIRTIO", "device": "vda", "storage_type": storage_type}],
+            "nics": [],
+        }
+        root = ET.fromstring(build_domain_xml(payload))
+        disk = root.find(".//disk")
+        assert disk.get("type") == "block", storage_type
+        assert disk.find("driver").get("type") == "raw", storage_type  # defaulted even with no explicit "format"
+
+
+def test_build_disk_xml_respects_storage_type_and_format_for_attach_detach():
+    xml_str = build_disk_xml(volume_path="vg-data/disk1", device="vdb", bus="VIRTIO", storage_type="LVM", format="raw")
+    root = ET.fromstring(xml_str)
+    assert root.get("type") == "block"
+    assert root.find("source").get("dev") == "vg-data/disk1"
+    assert root.find("driver").get("type") == "raw"
+
+
+def test_build_disk_xml_defaults_to_file_type_when_storage_type_omitted():
+    """Backward compatible with callers that don't know about
+    storage_type -- defaults to the original file/qcow2 behavior."""
+    xml_str = build_disk_xml(volume_path="/pools/local/disk.qcow2", device="vdb", bus="VIRTIO")
+    root = ET.fromstring(xml_str)
+    assert root.get("type") == "file"
+    assert root.find("source").get("file") == "/pools/local/disk.qcow2"
+    assert root.find("driver").get("type") == "qcow2"

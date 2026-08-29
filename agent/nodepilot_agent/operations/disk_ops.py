@@ -10,7 +10,13 @@ def create_disk(payload: dict) -> dict:
     # collide on the same storage pool.
     volume_name = payload["disk_uuid"]
     info = backend.create_volume(volume_name, payload["size_bytes"], format=payload.get("format", "qcow2"))
-    return {"volume_id": info.volume_id, "device": "", "size_bytes": info.size_bytes}
+    # `info.format` is what the backend actually produced -- LVM/LVM-thin/
+    # ZFS always return "raw" regardless of what was requested (they're
+    # block devices, not qcow2-capable files), so this is authoritative
+    # and the controller must persist it, not the originally-requested
+    # format, or the domain XML built later would declare the wrong
+    # driver type for this disk.
+    return {"volume_id": info.volume_id, "device": "", "size_bytes": info.size_bytes, "format": info.format}
 
 
 def delete_disk(payload: dict) -> dict:
@@ -34,7 +40,10 @@ def clone_disk(payload: dict) -> dict:
 def attach_disk(payload: dict, libvirt_client) -> dict:
     from nodepilot_agent.domain_xml import build_disk_xml
 
-    xml = build_disk_xml(volume_path=payload["volume_id"], device=payload["device"], bus=payload.get("bus", "VIRTIO"))
+    xml = build_disk_xml(
+        volume_path=payload["volume_id"], device=payload["device"], bus=payload.get("bus", "VIRTIO"),
+        storage_type=payload.get("storage_type"), format=payload.get("format"),
+    )
     libvirt_client.attach_device(payload["domain_uuid"], xml)
     return {}
 
@@ -42,6 +51,9 @@ def attach_disk(payload: dict, libvirt_client) -> dict:
 def detach_disk(payload: dict, libvirt_client) -> dict:
     from nodepilot_agent.domain_xml import build_disk_xml
 
-    xml = build_disk_xml(volume_path=payload["volume_id"], device=payload["device"], bus=payload.get("bus", "VIRTIO"))
+    xml = build_disk_xml(
+        volume_path=payload["volume_id"], device=payload["device"], bus=payload.get("bus", "VIRTIO"),
+        storage_type=payload.get("storage_type"), format=payload.get("format"),
+    )
     libvirt_client.detach_device(payload["domain_uuid"], xml)
     return {}

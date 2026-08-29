@@ -32,9 +32,9 @@ def _build_domain_payload(vm: VirtualMachine) -> dict:
             {
                 "uuid": str(d.uuid), "volume_id": d.volume_id, "bus": d.bus, "device": d.device,
                 "bootable": d.bootable, "readonly": d.readonly, "discard": d.discard, "iothread": d.iothread,
-                "boot_index": d.boot_index,
+                "boot_index": d.boot_index, "format": d.format, "storage_type": d.storage.type,
             }
-            for d in vm.disks.all()
+            for d in vm.disks.select_related("storage").all()
         ],
         "nics": [
             {
@@ -118,7 +118,13 @@ def provision_vm(self, job_id: int, vm_id: int) -> None:
                     )
                     disk.volume_id = data.get("volume_id", "")
                     disk.device = data.get("device", disk.device)
-                    disk.save(update_fields=["volume_id", "device"])
+                    # The agent's response is authoritative for format --
+                    # LVM/LVM-thin/ZFS backends always produce a raw block
+                    # device regardless of what was requested, and the
+                    # domain XML built two steps from now needs to match
+                    # what was actually created, not what we asked for.
+                    disk.format = data.get("format", disk.format)
+                    disk.save(update_fields=["volume_id", "device", "format"])
                 vm.provisioning_state = ProvisioningState.DISK_CREATED
                 vm.save(update_fields=["provisioning_state"])
 
@@ -347,10 +353,14 @@ def attach_disk_task(self, job_id: int, disk_id: int) -> None:
         )
         disk.volume_id = data.get("volume_id", "")
         disk.device = data.get("device", disk.device)
-        disk.save(update_fields=["volume_id", "device"])
+        disk.format = data.get("format", disk.format)  # authoritative -- see provision_vm's CREATE_DISK step
+        disk.save(update_fields=["volume_id", "device", "format"])
         agent_client.send_operation(
             disk.vm.node, OperationType.ATTACH_DISK, resource_id=str(disk.vm.uuid),
-            payload={"domain_uuid": str(disk.vm.domain_uuid), "volume_id": disk.volume_id, "device": disk.device or "vdb", "bus": disk.bus},
+            payload={
+                "domain_uuid": str(disk.vm.domain_uuid), "volume_id": disk.volume_id, "device": disk.device or "vdb",
+                "bus": disk.bus, "storage_type": disk.storage.type, "format": disk.format,
+            },
         )
 
     _disk_or_nic_task(job_id, disk, step=f"Attaching disk {disk.name}", run_op=run)
@@ -364,7 +374,10 @@ def detach_disk_task(self, job_id: int, disk_id: int) -> None:
     def run():
         agent_client.send_operation(
             vm.node, OperationType.DETACH_DISK, resource_id=str(vm.uuid),
-            payload={"domain_uuid": str(vm.domain_uuid), "volume_id": disk.volume_id, "device": disk.device, "bus": disk.bus},
+            payload={
+                "domain_uuid": str(vm.domain_uuid), "volume_id": disk.volume_id, "device": disk.device, "bus": disk.bus,
+                "storage_type": disk.storage.type, "format": disk.format,
+            },
         )
         if disk.volume_id:
             agent_client.send_operation(

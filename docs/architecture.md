@@ -124,9 +124,12 @@ the real API, with live job/status updates over WebSockets; see
 - **HA** (section 45): explicitly out of scope for this pass, per the
   same phased rollout ("do not implement unsafe automatic failover until
   fencing/split-brain protection is properly designed").
-- **Backup targets**: LOCAL/NFS are implemented end-to-end; S3/MinIO/Ceph
-  raise a clear `NotImplementedError` rather than a fake success, since
-  they need an object-storage client this pass doesn't ship.
+- **Backup targets**: LOCAL/NFS and S3/MinIO/Ceph (RGW) are all
+  implemented end-to-end -- the S3-compatible path uploads/downloads via
+  `boto3` with server-side encryption and a sha256 checksum verified
+  against the object, and `endpoint_url` is how MinIO/Ceph RGW targets
+  are distinguished from real AWS S3. Any other target type still raises
+  a clear `NotImplementedError` rather than a fake success.
 
 Nothing in the implemented paths pretends to succeed when it didn't --
 provisioning failures roll back and clean up partially created resources
@@ -195,3 +198,42 @@ ordinary authenticated HTTPS POST first
 atomically (a Lua GET-then-DELETE), so even a leaked ticket is useless
 after the one legitimate connection it was issued for.
 `tests/test_ws_ticket.py`.
+
+## Post-review correctness fixes
+
+Tracing the storage and backup paths end-to-end after the security review
+surfaced three functional bugs, none of them security issues but each
+one that would have broken real deployments:
+
+- **Disk format never tracked past creation** (`apps/virtual_machines/
+  tasks.py`, `agent/nodepilot_agent/domain_xml.py`): `VMDisk.format`
+  wasn't persisted from the agent's CREATE_DISK response, and the domain
+  XML generator hardcoded `type="qcow2"`/`type="file"` for every disk.
+  Any VM whose boot disk lived on LVM, LVM-thin, ZFS, or Ceph RBD --
+  which are always raw block devices, never files -- would get a domain
+  definition libvirt can't actually boot. Fixed by propagating the
+  agent-reported format/storage type through create, attach, and detach,
+  and deriving the XML's disk `type`/driver `format` from
+  `storage_type` (`_disk_source()` in `domain_xml.py`).
+  `backend/tests/test_disk_format_propagation.py`,
+  `agent/tests/test_domain_xml.py`.
+- **Backup create/restore never sent which disk to operate on**
+  (`apps/backups/tasks.py`, `agent/nodepilot_agent/operations/
+  backup_ops.py`): the CREATE_BACKUP/RESTORE_BACKUP payloads carried the
+  VM and target but no `volume_id`, so the agent had nothing to read
+  from or write to -- despite prior documentation in this file claiming
+  LOCAL/NFS backups worked end-to-end, they did not. Fixed by resolving
+  the VM's boot disk (falling back to its lowest-boot-index disk) and
+  including its `volume_id`/`format` in both payloads; a VM with no
+  disks now fails the job cleanly (`VM_HAS_NO_DISKS`) instead of the
+  agent receiving an unusable request. `backend/tests/
+  test_backup_payloads.py`.
+- **`BackupTarget.config` returned raw credentials on every list/
+  retrieve** (`apps/backups/serializers.py`): once S3/MinIO/Ceph support
+  landed, `config` routinely carries `access_key_id`/`secret_access_key`
+  -- the same class of leak the security review closed for
+  `Webhook.secret`. Fixed with the same pattern: a masked
+  `SerializerMethodField` for list/retrieve (last 4 characters kept for
+  identification) and a separate `BackupTargetCreateSerializer` that
+  returns the full value only in the create/update response.
+  `backend/tests/test_backup_target_secrets.py`.

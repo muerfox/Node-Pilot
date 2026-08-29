@@ -24,6 +24,7 @@ class BackupTarget(NodePilotModel):
     class Meta:
         db_table = "backup_targets"
         unique_together = [("organization", "name")]
+        ordering = ["name"]
 
     def __str__(self) -> str:
         return self.name

@@ -4,12 +4,23 @@ from celery import shared_task
 from django.utils import timezone
 
 from apps.backups.models import Backup, BackupSchedule, BackupStatus
+from apps.common.exceptions import NodePilotAPIException
 from apps.jobs.models import Job, JobStatus
 from apps.jobs.services import job_run, transition
 from apps.jobs.tasks import JobBoundTask
 from apps.nodes import agent_client
 from apps.nodes.protocol import OperationType
 from apps.virtual_machines.locks import storage_lock
+
+
+def _primary_disk(vm):
+    """The disk a whole-VM backup/restore actually operates on: the
+    bootable disk if one is marked, else the first by boot_index. (A
+    real per-disk backup selection is a natural follow-up; today's
+    Backup model is scoped to one VM, which in practice means its boot
+    disk.)"""
+    disk = vm.disks.select_related("storage").filter(bootable=True).order_by("boot_index").first()
+    return disk or vm.disks.select_related("storage").order_by("boot_index").first()
 
 
 @shared_task(bind=True, base=JobBoundTask)
@@ -24,9 +35,16 @@ def create_backup_task(self, job_id: int, backup_id: int) -> None:
                 backup.started_at = timezone.now()
                 backup.save(update_fields=["status", "started_at"])
 
+                disk = _primary_disk(vm)
+                if disk is None:
+                    raise NodePilotAPIException(f"VM {vm.name} has no disks to back up.", code_name="VM_HAS_NO_DISKS")
+
                 data = agent_client.send_operation(
                     vm.node, OperationType.CREATE_BACKUP, resource_id=str(vm.uuid),
-                    payload={"backup_uuid": str(backup.uuid), "backup_type": backup.type, "target": backup.target.config, "target_type": backup.target.type},
+                    payload={
+                        "backup_uuid": str(backup.uuid), "backup_type": backup.type, "target": backup.target.config,
+                        "target_type": backup.target.type, "volume_id": disk.volume_id,
+                    },
                     timeout=3600,
                 )
                 backup.agent_backup_ref = data.get("backup_ref", "")
@@ -58,9 +76,17 @@ def restore_backup_task(self, job_id: int, backup_id: int) -> None:
             with job_run(job, "Restoring backup"):
                 backup.status = BackupStatus.RESTORING
                 backup.save(update_fields=["status"])
+
+                disk = _primary_disk(vm)
+                if disk is None:
+                    raise NodePilotAPIException(f"VM {vm.name} has no disk to restore onto.", code_name="VM_HAS_NO_DISKS")
+
                 agent_client.send_operation(
                     vm.node, OperationType.RESTORE_BACKUP, resource_id=str(vm.uuid),
-                    payload={"backup_ref": backup.agent_backup_ref, "target": backup.target.config, "target_type": backup.target.type},
+                    payload={
+                        "backup_ref": backup.agent_backup_ref, "target": backup.target.config, "target_type": backup.target.type,
+                        "volume_id": disk.volume_id, "format": disk.format,
+                    },
                     timeout=3600,
                 )
                 backup.status = BackupStatus.COMPLETED

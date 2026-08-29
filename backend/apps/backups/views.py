@@ -5,7 +5,7 @@ from rest_framework.response import Response
 from apps.audit.services import log_from_request
 from apps.backups import services
 from apps.backups.models import Backup, BackupSchedule, BackupTarget
-from apps.backups.serializers import BackupScheduleSerializer, BackupSerializer, BackupTargetSerializer
+from apps.backups.serializers import BackupScheduleSerializer, BackupSerializer, BackupTargetCreateSerializer, BackupTargetSerializer
 from apps.common.viewsets import OrganizationScopedModelViewSet
 
 
@@ -18,6 +18,14 @@ class BackupTargetViewSet(OrganizationScopedModelViewSet):
     }
     filterset_fields = ["type", "enabled"]
     search_fields = ["name"]
+
+    def get_serializer_class(self):
+        # Only create/update ever need to write `config` (that's how a
+        # credential gets set/rotated in the first place); list/retrieve
+        # get the masked view -- see BackupTargetSerializer.get_config.
+        if self.action in ("create", "update", "partial_update"):
+            return BackupTargetCreateSerializer
+        return BackupTargetSerializer
 
 
 class BackupViewSet(OrganizationScopedModelViewSet):
