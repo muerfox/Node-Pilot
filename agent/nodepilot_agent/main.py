@@ -1,12 +1,13 @@
 """
-Entrypoint for the `nodepilot-agent` process. Runs two concurrent
+Entrypoint for the `nodepilot-agent` process. Runs three concurrent
 asyncio tasks for the lifetime of the process:
 
   * the heartbeat loop (HTTP POST every heartbeat_interval_seconds)
   * the command transport (persistent websocket, auto-reconnecting)
+  * the per-VM metrics loop (HTTP POST of real CPU%/memory samples)
 
-Both share one LibvirtClient. A SIGTERM/SIGINT triggers a clean shutdown
-of both loops -- this is what systemd sends on `systemctl stop`.
+All three share one LibvirtClient. A SIGTERM/SIGINT triggers a clean
+shutdown of all loops -- this is what systemd sends on `systemctl stop`.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from nodepilot_agent.heartbeat import heartbeat_loop
 from nodepilot_agent.libvirt_client import LibvirtClient
 from nodepilot_agent.logging_utils import configure_logging
 from nodepilot_agent.transport import run_transport
+from nodepilot_agent.vm_metrics import vm_metrics_loop
 
 logger = logging.getLogger("nodepilot_agent.main")
 
@@ -42,6 +44,7 @@ async def _main(config_path: str | None) -> None:
     await asyncio.gather(
         heartbeat_loop(config, libvirt_client, stop_event),
         run_transport(config, libvirt_client, stop_event),
+        vm_metrics_loop(config, libvirt_client, stop_event),
     )
 
     libvirt_client.close()

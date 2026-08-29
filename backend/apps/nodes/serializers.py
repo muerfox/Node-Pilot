@@ -52,3 +52,13 @@ class HeartbeatSerializer(serializers.Serializer):
     memory = serializers.DictField(required=False, default=dict)
     storage = serializers.DictField(required=False, default=dict)
     vms = serializers.IntegerField(required=False, default=0)
+
+
+class VMMetricSampleSerializer(serializers.Serializer):
+    domain_uuid = serializers.UUIDField()
+    cpu_percent = serializers.FloatField(required=False, allow_null=True, default=None)
+    memory_used_mb = serializers.IntegerField(required=False, allow_null=True, default=None)
+
+
+class VMMetricsBatchSerializer(serializers.Serializer):
+    samples = VMMetricSampleSerializer(many=True)

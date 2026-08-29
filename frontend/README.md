@@ -32,17 +32,13 @@ mocked or placeholder data anywhere. Job-driven mutations (start/stop/
 create/clone/snapshot/backup/...) show live progress via
 `/ws/jobs/{id}`; Node and VM status update live via their own channels.
 
-Two things are intentionally honest stubs rather than faked:
-
-- **Console tab**: opens the real WebSocket relay through to the agent's
-  VNC socket and shows live connection health/frame count, but does not
-  include a client-side VNC framebuffer renderer (noVNC) -- wiring that
-  in against the same binary-frame WebSocket
-  (`agent/nodepilot_agent/console.py`) is the natural next step.
-- **VM Metrics tab**: calls the real `/api/v1/metrics/vms/{id}/`
-  endpoint and renders whatever samples exist, but the backend heartbeat
-  loop doesn't yet push per-VM stats (only host-level), so it will show
-  "no metrics yet" until that's wired up agent-side.
+The Console tab renders a real graphical console: `@novnc/novnc`'s RFB
+client talks straight through the WebSocket relay to the agent's proxy
+onto QEMU's VNC socket (`agent/nodepilot_agent/console.py`) -- no extra
+framing needed, since that relay already carries raw binary frames both
+ways. The Metrics tab reads real per-VM CPU%/memory samples pushed by
+the agent's `vm_metrics_loop` (computed from actual libvirt `cpu_time`
+deltas, never fabricated) via `/api/v1/agent/vm-metrics/`.
 
 ## Key files
 

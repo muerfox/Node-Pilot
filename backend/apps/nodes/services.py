@@ -119,3 +119,42 @@ def mark_offline_if_stale(node: Node) -> bool:
 
     broadcast_node_status(node)
     return True
+
+
+def record_vm_metrics_batch(agent: Agent, samples: list[dict]) -> int:
+    """
+    Ingests a batch of per-VM samples pushed by the agent's metrics loop
+    (nodepilot_agent.vm_metrics). Each sample is keyed by the libvirt
+    `domain_uuid` -- the only identifier the agent actually has -- which
+    is resolved to a VirtualMachine scoped to this agent's own node, so
+    one compromised/misbehaving agent can never write metrics for a VM it
+    doesn't own. Samples for a domain_uuid NodePilot doesn't recognize on
+    this node are silently skipped (e.g. a stale sample, or reconciliation
+    hasn't caught up yet) rather than raising -- a metrics ingest
+    endpoint should never fail hard because inventory briefly drifted.
+    """
+    from apps.metrics.store import record_vm_sample
+    from apps.virtual_machines.models import VirtualMachine
+
+    domain_uuids = [s["domain_uuid"] for s in samples]
+    vms_by_domain = {
+        str(vm.domain_uuid): vm
+        for vm in VirtualMachine.objects.filter(node=agent.node, domain_uuid__in=domain_uuids)
+    }
+
+    recorded = 0
+    for sample in samples:
+        vm = vms_by_domain.get(str(sample["domain_uuid"]))
+        if vm is None:
+            continue
+        record_vm_sample(
+            vm,
+            cpu_percent=sample.get("cpu_percent"),
+            memory_used_mb=sample.get("memory_used_mb"),
+            disk_read_bytes=None,
+            disk_write_bytes=None,
+            net_rx_bytes=None,
+            net_tx_bytes=None,
+        )
+        recorded += 1
+    return recorded

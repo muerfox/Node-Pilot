@@ -98,13 +98,21 @@ agent protocol + WebSocket transport + Redis-correlated RPC, the full VM
 provisioning/lifecycle/clone state machine with rollback-on-failure
 cleanup, IPAM allocation, storage-capability-aware snapshots, chunked
 image upload with streaming checksum verification, webhook delivery with
-HMAC signing + exponential backoff, Redis-backed short-term metrics, the
-CLI, and the agent's libvirt/storage/network/cloud-init abstractions.
-The web UI (`frontend/`, React/TypeScript) covers every resource in the
-nav -- dashboard, nodes, VMs (list/wizard/10-tab detail), networks/IPAM,
-storage, images (real chunked upload), templates, jobs, backups, and the
-admin pages -- against the real API, with live job/status updates over
-WebSockets; see `frontend/README.md`.
+HMAC signing + exponential backoff, Redis-backed short-term metrics for
+both hosts and individual VMs (the agent's `vm_metrics_loop` computes
+real CPU% from libvirt `cpu_time` deltas and pushes it alongside memory
+RSS every heartbeat interval, scoped server-side so an agent can only
+report metrics for VMs actually scheduled on its own node), a working
+graphical console (noVNC's RFB client in the browser, talking straight
+through the existing WebSocket relay to the agent's proxy onto QEMU's
+VNC socket -- no extra framing needed since that relay already carries
+raw binary both ways), the CLI, and the agent's libvirt/storage/network/
+cloud-init abstractions. The web UI (`frontend/`, React/TypeScript)
+covers every resource in the nav -- dashboard, nodes, VMs (list/wizard/
+10-tab detail, console included), networks/IPAM, storage, images (real
+chunked upload), templates, jobs, backups, and the admin pages -- against
+the real API, with live job/status updates over WebSockets; see
+`frontend/README.md`.
 
 **Present but intentionally limited (documented, not faked):**
 
@@ -119,16 +127,6 @@ WebSockets; see `frontend/README.md`.
 - **Backup targets**: LOCAL/NFS are implemented end-to-end; S3/MinIO/Ceph
   raise a clear `NotImplementedError` rather than a fake success, since
   they need an object-storage client this pass doesn't ship.
-- **VM console rendering** (section 21): the WebSocket relay all the way
-  through to the agent's VNC socket is real and live, but there is no
-  client-side VNC framebuffer renderer (noVNC) wired in yet -- the
-  Console tab shows connection health/frame counts instead of pretending
-  to render a screen. See `frontend/README.md`.
-- **Per-VM metrics** (section 28): the `/api/v1/metrics/vms/{id}/`
-  endpoint and store are real, but nothing yet pushes per-VM samples into
-  it (only host-level metrics flow through the heartbeat) -- the UI's
-  Metrics tab will show "no metrics yet" until that agent-side loop is
-  added.
 
 Nothing in the implemented paths pretends to succeed when it didn't --
 provisioning failures roll back and clean up partially created resources

@@ -13,8 +13,8 @@ from apps.audit.services import log_from_request
 from apps.common.viewsets import OrganizationScopedModelViewSet
 from apps.nodes.auth import AgentTokenAuthentication
 from apps.nodes.models import Agent, AgentStatus, Node, NodeAdminState
-from apps.nodes.serializers import HeartbeatSerializer, NodeCreateSerializer, NodeSerializer
-from apps.nodes.services import record_heartbeat
+from apps.nodes.serializers import HeartbeatSerializer, NodeCreateSerializer, NodeSerializer, VMMetricsBatchSerializer
+from apps.nodes.services import record_heartbeat, record_vm_metrics_batch
 
 
 class IsAgent(BasePermission):
@@ -110,3 +110,24 @@ class HeartbeatView(APIView):
         serializer.is_valid(raise_exception=True)
         node = record_heartbeat(request.agent, serializer.validated_data)
         return Response({"status": "ok", "node_status": node.effective_status()})
+
+
+class VMMetricsIngestView(APIView):
+    """
+    POST /api/v1/agent/vm-metrics/  (Authorization: Agent <token>)
+
+    Separate from the host heartbeat (different cardinality and cadence --
+    one row per running VM vs. one per node) but the same trust model:
+    the agent may only report metrics for VMs NodePilot has scheduled on
+    its own node (see apps.nodes.services.record_vm_metrics_batch).
+    """
+
+    authentication_classes = [AgentTokenAuthentication]
+    permission_classes = [IsAgent]
+    throttle_classes = []
+
+    def post(self, request):
+        serializer = VMMetricsBatchSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        recorded = record_vm_metrics_batch(request.agent, serializer.validated_data["samples"])
+        return Response({"status": "ok", "recorded": recorded})

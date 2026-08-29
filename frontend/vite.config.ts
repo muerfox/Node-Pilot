@@ -17,6 +17,14 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  build: {
+    // @novnc/novnc's WebCodecs feature-detection module uses top-level
+    // await, which the default esbuild target (~es2020, for wider
+    // browser coverage) rejects outright. A VNC/RFB client is a modern-
+    // browser-only feature anyway, so target es2022 build-wide rather
+    // than special-casing one dependency.
+    target: "es2022",
+  },
   server: {
     port: 5173,
     host: true,

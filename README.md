@@ -65,17 +65,20 @@ make agent-test
 make cli-test
 ```
 
-The backend suite (42 tests) runs against SQLite with a faked Redis (no
+The backend suite (45 tests) runs against SQLite with a faked Redis (no
 external services required); it covers the RBAC policy engine, quota
 enforcement, IPAM allocation, distributed locking, the Job state machine,
-a full VM-provisioning run, and disk/NIC hot-plug, all with the agent RPC
-layer mocked. The agent suite (23 tests, +3 skipped when `qemu-img` isn't
-installed) covers protocol framing, domain-XML generation (including
-XML-injection safety), the storage backends' path-traversal protection,
-and operation dispatch. The CLI suite (8 tests) covers the HTTP client
-and command wiring. The frontend (`npm run typecheck && npm run lint &&
-npm run build`) type-checks, lints clean, and builds to a 91 KB gzipped
-bundle. 73 automated tests pass as of this build.
+a full VM-provisioning run, disk/NIC hot-plug, and per-VM metrics ingest
+(including that one agent can't write metrics for a VM on another node),
+all with the agent RPC layer mocked. The agent suite (29 tests, +3
+skipped when `qemu-img` isn't installed) covers protocol framing,
+domain-XML generation (including XML-injection safety), the storage
+backends' path-traversal protection, operation dispatch, and the real
+CPU% delta computation behind per-VM metrics. The CLI suite (8 tests)
+covers the HTTP client and command wiring. The frontend (`npm run
+typecheck && npm run lint && npm run build`) type-checks, lints clean,
+and builds to a 145 KB gzipped bundle (noVNC accounts for most of that).
+82 automated tests pass as of this build.
 
 ## CLI
 
