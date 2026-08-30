@@ -1,7 +1,7 @@
 """
 Regression test for a webhook SSRF bypass: WebhookSerializer.validate_url
 only rejects private/loopback/link-local hosts at *creation* time
-(apps.webhooks.serializers._is_private_host). requests.post follows
+(apps.webhooks.security.is_private_host). requests.post follows
 redirects by default, so a webhook target that responds with a 3xx to an
 internal address (e.g. cloud metadata, localhost services) made that
 create-time check purely cosmetic -- the delivery would transparently
@@ -35,10 +35,13 @@ def test_delivery_request_disables_redirects(delivery):
     (or anyone able to make it respond 3xx) can point the controller's
     outbound request at an internal address after the create-time host
     check already passed."""
-    with patch("apps.webhooks.tasks.requests.post") as mock_post:
-        mock_post.return_value.status_code = 200
-        mock_post.return_value.text = "ok"
-        deliver_webhook(delivery.pk)
+    # resolve_safe_ip does a real DNS lookup; not what this test is
+    # about (see test_webhook_dns_rebinding.py for that), so pin it.
+    with patch("apps.webhooks.tasks.resolve_safe_ip", return_value="93.184.216.34"):
+        with patch("apps.webhooks.tasks.requests.post") as mock_post:
+            mock_post.return_value.status_code = 200
+            mock_post.return_value.text = "ok"
+            deliver_webhook(delivery.pk)
 
     assert mock_post.call_args.kwargs.get("allow_redirects") is False
 
@@ -46,11 +49,12 @@ def test_delivery_request_disables_redirects(delivery):
 def test_a_redirect_response_is_treated_as_a_failed_delivery_not_success(delivery):
     """Belt-and-suspenders: even if the kwarg were ever dropped by
     accident, a 3xx must not be recorded as SUCCESS."""
-    with patch("apps.webhooks.tasks.requests.post") as mock_post:
-        mock_post.return_value.status_code = 302
-        mock_post.return_value.text = ""
-        with pytest.raises(Exception):
-            deliver_webhook(delivery.pk)
+    with patch("apps.webhooks.tasks.resolve_safe_ip", return_value="93.184.216.34"):
+        with patch("apps.webhooks.tasks.requests.post") as mock_post:
+            mock_post.return_value.status_code = 302
+            mock_post.return_value.text = ""
+            with pytest.raises(Exception):
+                deliver_webhook(delivery.pk)
 
     delivery.refresh_from_db()
     assert delivery.status != DeliveryStatus.SUCCESS

@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import json
 import logging
+from urllib.parse import urlparse
 
 import requests
 from celery import shared_task
@@ -11,6 +12,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.webhooks.models import DeliveryStatus, WebhookDelivery
+from apps.webhooks.security import UnsafeWebhookHostError, pinned_dns, resolve_safe_ip
 
 logger = logging.getLogger("nodepilot.webhooks")
 
@@ -31,26 +33,34 @@ def deliver_webhook(self, delivery_id: int) -> None:
     signature = sign_payload(webhook.secret, body)
 
     delivery.attempt += 1
+    hostname = urlparse(webhook.url).hostname
+
     try:
-        response = requests.post(
-            webhook.url,
-            data=body,
-            headers={
-                "Content-Type": "application/json",
-                "X-NodePilot-Event": delivery.event_type,
-                "X-NodePilot-Signature": f"sha256={signature}",
-                "X-NodePilot-Delivery": str(delivery.uuid),
-            },
-            timeout=REQUEST_TIMEOUT_SECONDS,
-            # WebhookSerializer.validate_url only rejects private/loopback/
-            # link-local hosts at creation time -- following a redirect
-            # here would let a webhook target (or anyone able to make it
-            # respond with a 3xx, e.g. an open redirector) point this
-            # server-side request at an internal address after the fact,
-            # making the create-time check purely cosmetic. A legitimate
-            # receiver has no need to redirect a webhook delivery.
-            allow_redirects=False,
-        )
+        # WebhookSerializer.validate_url already rejected private/
+        # loopback/link-local hosts at creation time, but that check is
+        # stale by the time a delivery actually happens -- a DNS record
+        # can change in between. Re-resolve and re-validate now, then pin
+        # the HTTP client's connection to exactly the address just
+        # validated, so its own (separate) DNS lookup can't be steered
+        # to something else in the gap between our check and its connect
+        # (DNS rebinding).
+        safe_ip = resolve_safe_ip(hostname)
+        with pinned_dns(hostname, safe_ip):
+            response = requests.post(
+                webhook.url,
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-NodePilot-Event": delivery.event_type,
+                    "X-NodePilot-Signature": f"sha256={signature}",
+                    "X-NodePilot-Delivery": str(delivery.uuid),
+                },
+                timeout=REQUEST_TIMEOUT_SECONDS,
+                # A legitimate receiver has no need to redirect a webhook
+                # delivery, and following one would sidestep the pinned
+                # address entirely.
+                allow_redirects=False,
+            )
         delivery.response_status = response.status_code
         delivery.response_body = response.text[:2000]
 
@@ -61,6 +71,17 @@ def deliver_webhook(self, delivery_id: int) -> None:
             return
 
         raise requests.HTTPError(f"Webhook endpoint returned {response.status_code}")
+
+    except UnsafeWebhookHostError as exc:
+        # Not worth retrying: an unsafe/unresolvable target isn't going
+        # to fix itself before the next scheduled event re-triggers this
+        # same check, and retrying an SSRF-flagged host is exactly the
+        # kind of behavior we don't want.
+        delivery.status = DeliveryStatus.FAILED
+        delivery.response_body = str(exc)[:2000]
+        delivery.save(update_fields=["attempt", "response_body", "status"])
+        logger.warning("Webhook delivery %s rejected at delivery time: %s", delivery.uuid, exc)
+        return
 
     except Exception as exc:
         delivery.response_body = str(exc)[:2000]

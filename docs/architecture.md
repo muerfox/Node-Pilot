@@ -159,10 +159,15 @@ handling) found and fixed four real issues, each with a regression test:
   follows redirects by default, so a webhook target that later responded
   with a 3xx to an internal address (cloud metadata, localhost services)
   made that check purely cosmetic. Fixed with `allow_redirects=False`.
-  `tests/test_webhook_delivery.py`. (DNS rebinding between validation and
-  delivery is a related, lower-severity gap that isn't closed yet --
-  would need re-resolving and re-validating the host immediately before
-  each delivery attempt.)
+  `tests/test_webhook_delivery.py`. DNS rebinding between validation and
+  delivery -- flagged in that same review as a related, unclosed gap --
+  is now also closed: `apps/webhooks/tasks.py` re-resolves and
+  re-validates the host at delivery time (`security.resolve_safe_ip`)
+  and pins the HTTP client's connection to that exact validated address
+  (`security.pinned_dns`, a scoped `socket.getaddrinfo` override for the
+  duration of the request) so the client's own separate DNS lookup can't
+  be steered to a different address in the gap between the check and the
+  connect. `tests/test_webhook_dns_rebinding.py`.
 - **XML attribute injection** (`agent/nodepilot_agent/domain_xml.py`):
   `xml.sax.saxutils.escape()`'s default entity set covers `&`/`<`/`>`
   only, not quotes -- every value here lands inside a double-quoted XML

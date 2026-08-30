@@ -1,26 +1,9 @@
-import ipaddress
-import socket
 from urllib.parse import urlparse
 
 from rest_framework import serializers
 
 from apps.webhooks.models import SUPPORTED_EVENTS, Webhook, WebhookDelivery
-
-
-def _is_private_host(hostname: str) -> bool:
-    try:
-        addr = ipaddress.ip_address(hostname)
-        return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_reserved
-    except ValueError:
-        pass  # Not a literal IP; resolve it.
-    try:
-        for family, _, _, _, sockaddr in socket.getaddrinfo(hostname, None):
-            ip = ipaddress.ip_address(sockaddr[0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
-                return True
-    except socket.gaierror:
-        return True  # Can't resolve it -- reject rather than risk surprises.
-    return False
+from apps.webhooks.security import is_private_host
 
 
 class WebhookSerializer(serializers.ModelSerializer):
@@ -49,12 +32,11 @@ class WebhookSerializer(serializers.ModelSerializer):
         if not parsed.hostname:
             raise serializers.ValidationError("URL must include a hostname.")
         # Best-effort SSRF mitigation (section 46): refuse targets that
-        # resolve to private/loopback/link-local address space. This does
-        # not defend against DNS rebinding between validation and delivery
-        # time; a production deployment should additionally pin resolved
-        # addresses at request time or route webhook egress through an
-        # isolated network path.
-        if _is_private_host(parsed.hostname):
+        # resolve to private/loopback/link-local address space. This is
+        # create-time only and does not by itself defend against DNS
+        # rebinding -- `apps.webhooks.tasks.deliver_webhook` re-resolves
+        # and pins the address at delivery time for that.
+        if is_private_host(parsed.hostname):
             raise serializers.ValidationError("Webhook URL must not target a private, loopback, or link-local address.")
         return value
 
