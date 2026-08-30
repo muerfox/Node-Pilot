@@ -286,3 +286,5 @@ one that would have broken real deployments:
   /subnets/{uuid}/reserve/` (`SubnetViewSet.reserve`, alongside the
   existing `allocate` action) with a matching "Reserve IP" button on the
   Networks page. `backend/tests/test_ipam.py`.
+
+Not every "no test coverage" lead panned out into a bug: `apps.nodes.tasks.sweep_offline_nodes`/`reconcile_nodes` (node offline detection and the drift-reconciliation sweep, both correctly registered in `CELERY_BEAT_SCHEDULE`) had zero test coverage but turned out to already be correct, including the trickier case of a node flapping offline, recovering, then going offline again without double-firing or dropping the second `NODE_OFFLINE` event. `backend/tests/test_node_health.py` now locks that in.
