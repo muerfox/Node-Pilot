@@ -273,3 +273,16 @@ one that would have broken real deployments:
   re-syncs the linked `CrontabSchedule`/`PeriodicTask` for whichever
   fields actually affect it, wired in via `perform_update`.
   `backend/tests/test_backup_schedules.py`.
+- **IP reservation was unreachable, and unsafe once reachable**
+  (`apps/networks/services.py`): `IPAddressState.RESERVED` has been a
+  first-class model state since section 23, and `reserve_ip` fully
+  implemented it -- but nothing in the codebase ever called it: no view
+  action, no CLI command, nothing. Once wired up it also turned out to
+  be unsafe as written -- it used `update_or_create` unconditionally, so
+  reserving an address currently `ALLOCATED` to a live VM NIC would have
+  silently reassigned that NIC's address out from under it. Fixed by
+  rejecting a reservation against an already-allocated address, adding
+  a same-subnet-CIDR check, and exposing it as `POST
+  /subnets/{uuid}/reserve/` (`SubnetViewSet.reserve`, alongside the
+  existing `allocate` action) with a matching "Reserve IP" button on the
+  Networks page. `backend/tests/test_ipam.py`.

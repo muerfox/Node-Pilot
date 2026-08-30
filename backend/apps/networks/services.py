@@ -19,6 +19,11 @@ class NoAvailableIPAddress(NodePilotAPIException):
     default_detail = "No available IP address in the requested subnet/pool."
 
 
+class InvalidReservation(NodePilotAPIException):
+    code_name = "INVALID_IP_RESERVATION"
+    status_code = 409
+
+
 def _subnet_lock(subnet: Subnet) -> RedisLock:
     return RedisLock(f"subnet:{subnet.pk}:ipam", ttl_seconds=15)
 
@@ -50,8 +55,24 @@ def release_ip(ip_address: IPAddress) -> None:
 
 
 def reserve_ip(subnet: Subnet, address: str, note: str = "") -> IPAddress:
-    obj, _ = IPAddress.objects.update_or_create(subnet=subnet, address=address, defaults={"state": IPAddressState.RESERVED, "note": note})
-    return obj
+    """Marks `address` RESERVED so `allocate_ip` will never hand it out --
+    for addresses that need to stay out of the pool without belonging to
+    any VM's NIC (a gateway, an externally-managed host, ...)."""
+    import ipaddress as ip_module
+
+    try:
+        parsed = ip_module.ip_address(address)
+    except ValueError as exc:
+        raise InvalidReservation(f"{address!r} is not a valid IP address.") from exc
+    if parsed not in subnet.network_obj:
+        raise InvalidReservation(f"{address} is not within subnet {subnet.cidr}.")
+
+    with _subnet_lock(subnet):
+        existing = IPAddress.objects.filter(subnet=subnet, address=address).first()
+        if existing is not None and existing.state == IPAddressState.ALLOCATED:
+            raise InvalidReservation(f"{address} is already allocated to a NIC; release it before reserving it.")
+        obj, _ = IPAddress.objects.update_or_create(subnet=subnet, address=address, defaults={"state": IPAddressState.RESERVED, "note": note})
+        return obj
 
 
 def find_free_ip(subnet: Subnet) -> str | None:

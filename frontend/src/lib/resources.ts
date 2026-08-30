@@ -126,6 +126,7 @@ export const subnets = {
   list: (params?: Params) => api.get<Paginated<Subnet>>("subnets/", params),
   create: (body: { network: string; cidr: string; gateway?: string | null }) => api.post<Subnet>("subnets/", body),
   allocateIp: (uuid: string, note?: string) => api.post<IPAddress>(`subnets/${uuid}/allocate/`, { note }),
+  reserveIp: (uuid: string, address: string, note?: string) => api.post<IPAddress>(`subnets/${uuid}/reserve/`, { address, note }),
 };
 
 export const ipAddresses = {

@@ -91,6 +91,7 @@ function NetworksList() {
 function SubnetsList() {
   const query = useQuery({ queryKey: ["subnets"], queryFn: () => subnets.list({ page_size: 100 }) });
   const [showCreate, setShowCreate] = useState(false);
+  const [reserveFor, setReserveFor] = useState<string | null>(null);
   const queryClient = useQueryClient();
   const allocateMutation = useMutation({
     mutationFn: (uuid: string) => subnets.allocateIp(uuid),
@@ -124,9 +125,12 @@ function SubnetsList() {
                 <tr key={s.uuid}>
                   <td className="font-mono text-sm">{s.cidr}</td>
                   <td>{s.gateway ?? "-"}</td>
-                  <td className="text-right">
+                  <td className="text-right space-x-2">
                     <button className="btn-ghost !py-1 !px-2 text-xs" onClick={() => allocateMutation.mutate(s.uuid)} disabled={allocateMutation.isPending}>
                       Allocate next free IP
+                    </button>
+                    <button className="btn-ghost !py-1 !px-2 text-xs" onClick={() => setReserveFor(s.uuid)}>
+                      Reserve IP
                     </button>
                   </td>
                 </tr>
@@ -136,7 +140,56 @@ function SubnetsList() {
         </div>
       )}
       {showCreate && <CreateSubnetModal onClose={() => setShowCreate(false)} />}
+      {reserveFor && <ReserveIPModal subnetUuid={reserveFor} onClose={() => setReserveFor(null)} />}
     </div>
+  );
+}
+
+function ReserveIPModal({ subnetUuid, onClose }: { subnetUuid: string; onClose: () => void }) {
+  const queryClient = useQueryClient();
+  const [address, setAddress] = useState("");
+  const [note, setNote] = useState("");
+
+  const mutation = useMutation({
+    mutationFn: () => subnets.reserveIp(subnetUuid, address, note),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["ips"] });
+      onClose();
+    },
+  });
+
+  return (
+    <Modal title="Reserve IP address" onClose={onClose}>
+      <form
+        className="space-y-3"
+        onSubmit={(e: FormEvent) => {
+          e.preventDefault();
+          mutation.mutate();
+        }}
+      >
+        <p className="text-xs text-surface-400">
+          Marks an address as reserved so it is never handed out by "Allocate next free IP" -- for a gateway or another host in this subnet that
+          NodePilot doesn't manage.
+        </p>
+        <div>
+          <label className="label">Address</label>
+          <input className="input" required value={address} onChange={(e) => setAddress(e.target.value)} placeholder="10.20.120.1" />
+        </div>
+        <div>
+          <label className="label">Note (optional)</label>
+          <input className="input" value={note} onChange={(e) => setNote(e.target.value)} placeholder="gateway" />
+        </div>
+        <ErrorBanner error={mutation.error} />
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" className="btn-secondary" onClick={onClose}>
+            Cancel
+          </button>
+          <button type="submit" className="btn-primary" disabled={mutation.isPending || !address}>
+            Reserve
+          </button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
