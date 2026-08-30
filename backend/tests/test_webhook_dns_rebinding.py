@@ -11,6 +11,8 @@ client's connection to exactly the address just validated.
 from __future__ import annotations
 
 import socket
+import threading
+import time
 from unittest.mock import patch
 
 import pytest
@@ -73,6 +75,38 @@ def test_pinned_dns_preserves_the_ipv6_family_and_sockaddr_shape():
         assert family == socket.AF_INET6
         assert sockaddr[0] == "2606:2800:220:1:248:1893:25c8:1946"
         assert sockaddr[1] == 443
+
+
+def test_pinned_dns_is_safe_under_concurrent_deliveries():
+    """pinned_dns monkeypatches the process-global socket.getaddrinfo.
+    Celery's default prefork pool never runs two tasks in one process at
+    once, so that's fine there -- but a threaded/gevent/eventlet pool
+    would run two deliveries concurrently in the same process, where two
+    un-synchronized monkeypatches racing to patch/restore could clobber
+    each other. _dns_patch_lock serializes entry into pinned_dns to
+    prevent that; this fires two overlapping calls from separate threads
+    (each holding its context open briefly, to maximize contention on
+    the lock) and checks each only ever observes its own pin, never the
+    other's -- i.e. the serialization doesn't corrupt either result."""
+    results = {}
+
+    def worker(name, hostname, ip):
+        with pinned_dns(hostname, ip):
+            time.sleep(0.02)  # hold the context open to maximize lock contention with the other thread
+            results[name] = socket.getaddrinfo(hostname, 443)[0][4][0]
+
+    t1 = threading.Thread(target=worker, args=("a", "host-a.example", "203.0.113.1"))
+    t2 = threading.Thread(target=worker, args=("b", "host-b.example", "203.0.113.2"))
+    t1.start()
+    t2.start()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    assert results == {"a": "203.0.113.1", "b": "203.0.113.2"}
+    # And the patch is fully unwound afterwards -- if it leaked, this
+    # would still return the pinned IP instead of hitting real DNS.
+    with pytest.raises(socket.gaierror):
+        socket.getaddrinfo("host-a.example", 443)
 
 
 def test_is_private_host_still_works_for_create_time_validation(monkeypatch):

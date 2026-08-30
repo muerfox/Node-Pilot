@@ -19,8 +19,21 @@ from __future__ import annotations
 
 import ipaddress
 import socket
+import threading
 from contextlib import contextmanager
 from typing import Iterator
+
+# `pinned_dns` monkeypatches the process-global `socket.getaddrinfo`.
+# Under Celery's default prefork pool each worker process runs one task
+# at a time, so that's harmless -- but a threaded/gevent/eventlet pool
+# (a reasonable choice for I/O-bound work like webhook delivery) runs
+# multiple tasks concurrently *in the same process*, where two
+# overlapping `pinned_dns` calls would race and could clobber each
+# other's patch (or each other's restore). Serializing on this lock
+# makes the monkeypatch correct under any pool type, at the cost of one
+# webhook delivery's DNS-pin window blocking another's -- negligible
+# next to the delivery's own network I/O.
+_dns_patch_lock = threading.Lock()
 
 
 class UnsafeWebhookHostError(Exception):
@@ -86,21 +99,26 @@ def pinned_dns(hostname: str, ip: str) -> Iterator[None]:
     to resolve to `ip` instead of performing a fresh DNS lookup -- so the
     HTTP client used for the actual delivery can't be steered to a
     different (possibly private) address than the one `resolve_safe_ip`
-    just validated. Scoped to a single outbound call in a Celery task, so
-    the global monkeypatch is restored before anything else in this
-    worker process observes it.
+    just validated. Scoped to a single outbound call in a Celery task and
+    serialized via `_dns_patch_lock` so the global monkeypatch is always
+    restored -- to exactly what it was before -- before anything else in
+    this worker process can observe or clobber it.
     """
     pinned_family = socket.AF_INET6 if ipaddress.ip_address(ip).version == 6 else socket.AF_INET
-    original_getaddrinfo = socket.getaddrinfo
 
-    def patched(host, port=0, family=0, type=0, proto=0, flags=0):
-        if host == hostname:
-            sockaddr = (ip, port, 0, 0) if pinned_family == socket.AF_INET6 else (ip, port)
-            return [(pinned_family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", sockaddr)]
-        return original_getaddrinfo(host, port, family, type, proto, flags)
+    def make_patched(original_getaddrinfo):
+        def patched(host, port=0, family=0, type=0, proto=0, flags=0):
+            if host == hostname:
+                sockaddr = (ip, port, 0, 0) if pinned_family == socket.AF_INET6 else (ip, port)
+                return [(pinned_family, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", sockaddr)]
+            return original_getaddrinfo(host, port, family, type, proto, flags)
 
-    socket.getaddrinfo = patched
-    try:
-        yield
-    finally:
-        socket.getaddrinfo = original_getaddrinfo
+        return patched
+
+    with _dns_patch_lock:
+        original_getaddrinfo = socket.getaddrinfo
+        socket.getaddrinfo = make_patched(original_getaddrinfo)
+        try:
+            yield
+        finally:
+            socket.getaddrinfo = original_getaddrinfo

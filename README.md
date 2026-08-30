@@ -65,7 +65,7 @@ make agent-test
 make cli-test
 ```
 
-The backend suite (80 tests) runs against SQLite with a faked Redis (no
+The backend suite (81 tests) runs against SQLite with a faked Redis (no
 external services required); it covers the RBAC policy engine
 (including a cross-tenant authorization regression and the WebSocket
 ticket auth flow -- see `docs/architecture.md`'s security review
@@ -85,7 +85,7 @@ trip (via `moto`) for the S3/MinIO/Ceph-RGW backup target. The CLI suite
 (8 tests) covers the HTTP client and command wiring. The frontend (`npm
 run typecheck && npm run lint && npm run build`) type-checks, lints
 clean, and builds to a 146 KB gzipped bundle (noVNC accounts for most of
-that). 136 automated tests pass as of this build.
+that). 137 automated tests pass as of this build.
 
 ## CLI
 

@@ -167,7 +167,12 @@ handling) found and fixed four real issues, each with a regression test:
   (`security.pinned_dns`, a scoped `socket.getaddrinfo` override for the
   duration of the request) so the client's own separate DNS lookup can't
   be steered to a different address in the gap between the check and the
-  connect. `tests/test_webhook_dns_rebinding.py`.
+  connect. That monkeypatch is process-global, so `pinned_dns` serializes
+  on a lock (`_dns_patch_lock`) -- harmless under Celery's default
+  prefork pool (one task per process at a time) but load-bearing under a
+  threaded/gevent/eventlet pool, where two deliveries running
+  concurrently in the same process could otherwise clobber each other's
+  patch or restore. `tests/test_webhook_dns_rebinding.py`.
 - **XML attribute injection** (`agent/nodepilot_agent/domain_xml.py`):
   `xml.sax.saxutils.escape()`'s default entity set covers `&`/`<`/`>`
   only, not quotes -- every value here lands inside a double-quoted XML
