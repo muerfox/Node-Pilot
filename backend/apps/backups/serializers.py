@@ -1,7 +1,24 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
+from django_celery_beat.validators import (
+    day_of_month_validator,
+    day_of_week_validator,
+    hour_validator,
+    minute_validator,
+    month_of_year_validator,
+)
 from rest_framework import serializers
 
 from apps.backups.models import Backup, BackupSchedule, BackupTarget
 from apps.virtual_machines.models import VirtualMachine
+
+# Same order as the 5 cron fields and django_celery_beat's own
+# CrontabSchedule field validators -- reusing them (rather than writing
+# a second, possibly-diverging cron parser) guarantees that anything
+# this accepts is exactly what _sync_periodic_task's CrontabSchedule
+# will also accept, so a schedule can't be created here and then
+# silently fail to ever actually run under Celery Beat.
+_CRON_FIELD_VALIDATORS = [minute_validator, hour_validator, day_of_month_validator, month_of_year_validator, day_of_week_validator]
+_CRON_FIELD_NAMES = ["minute", "hour", "day-of-month", "month", "day-of-week"]
 
 # Keys within BackupTarget.config that hold a real credential rather than
 # connection metadata (bucket/endpoint_url/region/prefix/path are fine to
@@ -69,6 +86,12 @@ class BackupScheduleSerializer(serializers.ModelSerializer):
         read_only_fields = ["uuid", "created_at"]
 
     def validate_cron_expression(self, value: str) -> str:
-        if len(value.split()) != 5:
+        fields = value.split()
+        if len(fields) != 5:
             raise serializers.ValidationError("Expected a standard 5-field cron expression (minute hour day-of-month month day-of-week).")
+        for field, name, validator in zip(fields, _CRON_FIELD_NAMES, _CRON_FIELD_VALIDATORS):
+            try:
+                validator(field)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(f"Invalid {name} field {field!r}: {exc}") from exc
         return value

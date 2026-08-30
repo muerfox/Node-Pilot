@@ -247,3 +247,29 @@ one that would have broken real deployments:
   identification) and a separate `BackupTargetCreateSerializer` that
   returns the full value only in the create/update response.
   `backend/tests/test_backup_target_secrets.py`.
+- **Backup schedules could silently drift from what Celery Beat actually
+  runs** (`apps/backups/serializers.py`, `apps/backups/services.py`,
+  `apps/backups/views.py`): had no test coverage at all until this was
+  found. Two compounding gaps -- `validate_cron_expression` only checked
+  for 5 whitespace-separated fields, never that each was a valid cron
+  value, and `_sync_periodic_task` feeds those fields straight into
+  `CrontabSchedule.objects.get_or_create(...)`, which (unlike
+  `full_clean()`) skips the model's own field validators, so e.g.
+  `"99 25 abc def ghi"` was accepted with a 201 and produced a
+  CrontabSchedule Beat could never evaluate. Separately,
+  `update_schedule_enabled` -- written specifically to keep a schedule's
+  linked `PeriodicTask` in sync -- was never actually called from
+  anywhere; `BackupScheduleViewSet` had no `perform_update` override, so
+  PATCH/PUT fell through to DRF's default `serializer.save()`, which
+  updates the `BackupSchedule` row and never touches the `PeriodicTask`.
+  `PATCH {"enabled": false}` looked like it worked (the row said so)
+  while Beat kept firing the schedule on its original crontab forever;
+  changing `cron_expression` had the same silent-drift problem. Fixed by
+  validating each cron field against `django_celery_beat`'s own
+  validators (`minute_validator`, `hour_validator`, ...) -- the same
+  ones `CrontabSchedule` itself uses, so nothing accepted here can go on
+  to silently fail at the model level -- and replacing
+  `update_schedule_enabled` with a general `update_schedule` that
+  re-syncs the linked `CrontabSchedule`/`PeriodicTask` for whichever
+  fields actually affect it, wired in via `perform_update`.
+  `backend/tests/test_backup_schedules.py`.

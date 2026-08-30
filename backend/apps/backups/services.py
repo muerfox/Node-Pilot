@@ -67,12 +67,45 @@ def create_schedule(*, organization, vm, target, backup_type: str, cron_expressi
     return schedule
 
 
-def update_schedule_enabled(schedule: BackupSchedule, enabled: bool) -> BackupSchedule:
-    schedule.enabled = enabled
-    schedule.save(update_fields=["enabled"])
+def update_schedule(schedule: BackupSchedule, **fields) -> BackupSchedule:
+    """Applies a partial update to `schedule` and keeps its linked Celery
+    Beat PeriodicTask in sync. A plain `serializer.save()` would update
+    the BackupSchedule row but silently leave the PeriodicTask (and its
+    CrontabSchedule) exactly as `_sync_periodic_task` first created it --
+    most dangerously for `enabled`, where PATCHing `enabled: false` would
+    look like it worked (the DB row says so) while Celery Beat kept
+    firing the schedule on its original crontab forever.
+    """
+    cron_or_tz_changed = ("cron_expression" in fields and fields["cron_expression"] != schedule.cron_expression) or (
+        "timezone" in fields and fields["timezone"] != schedule.timezone
+    )
+
+    for field, value in fields.items():
+        setattr(schedule, field, value)
+    if fields:
+        schedule.save(update_fields=list(fields))
+
     if schedule.periodic_task_id:
-        schedule.periodic_task.enabled = enabled
-        schedule.periodic_task.save(update_fields=["enabled"])
+        task_update_fields = []
+
+        if cron_or_tz_changed:
+            from django_celery_beat.models import CrontabSchedule
+
+            minute, hour, day_of_month, month_of_year, day_of_week = schedule.cron_expression.split()
+            crontab, _ = CrontabSchedule.objects.get_or_create(
+                minute=minute, hour=hour, day_of_month=day_of_month, month_of_year=month_of_year, day_of_week=day_of_week,
+                timezone=schedule.timezone,
+            )
+            schedule.periodic_task.crontab = crontab
+            task_update_fields.append("crontab")
+
+        if "enabled" in fields:
+            schedule.periodic_task.enabled = schedule.enabled
+            task_update_fields.append("enabled")
+
+        if task_update_fields:
+            schedule.periodic_task.save(update_fields=task_update_fields)
+
     return schedule
 
 

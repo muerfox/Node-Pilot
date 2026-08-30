@@ -78,5 +78,13 @@ class BackupScheduleViewSet(OrganizationScopedModelViewSet):
         )
         serializer.instance = schedule
 
+    def perform_update(self, serializer):
+        # Not a plain serializer.save(): cron_expression/timezone/enabled
+        # all have a live Celery Beat PeriodicTask that needs updating in
+        # step, or the update would silently stop matching what Beat
+        # actually runs. See services.update_schedule.
+        schedule = services.update_schedule(serializer.instance, **serializer.validated_data)
+        serializer.instance = schedule
+
     def perform_destroy(self, instance):
         services.delete_schedule(instance)
