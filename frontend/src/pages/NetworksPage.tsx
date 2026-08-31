@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState, type FormEvent } from "react";
 
+import ConfirmButton from "@/components/ConfirmButton";
 import EmptyState from "@/components/EmptyState";
 import ErrorBanner from "@/components/ErrorBanner";
 import Modal from "@/components/Modal";
@@ -52,12 +53,16 @@ export default function NetworksPage() {
 }
 
 function NetworksList() {
+  const queryClient = useQueryClient();
   const query = useQuery({ queryKey: ["networks"], queryFn: () => networks.list({ page_size: 100 }) });
+  const deleteMutation = useMutation({ mutationFn: networks.remove, onSuccess: () => queryClient.invalidateQueries({ queryKey: ["networks"] }) });
+
   if (query.isLoading) return <FullPageSpinner />;
   if (!query.data?.results.length) return <EmptyState title="No networks" description="Add a Linux bridge network on a node." />;
 
   return (
     <div className="card overflow-x-auto">
+      <ErrorBanner error={deleteMutation.error} />
       <table>
         <thead>
           <tr>
@@ -67,6 +72,7 @@ function NetworksList() {
             <th>VLAN</th>
             <th>Status</th>
             <th>DHCP</th>
+            <th></th>
           </tr>
         </thead>
         <tbody>
@@ -80,6 +86,11 @@ function NetworksList() {
                 <StatusBadge status={n.status} />
               </td>
               <td>{n.dhcp_enabled ? "yes" : "no"}</td>
+              <td className="text-right">
+                <ConfirmButton className="btn-ghost !py-1 !px-2 text-xs text-status-error" onConfirm={() => deleteMutation.mutate(n.uuid)}>
+                  Delete
+                </ConfirmButton>
+              </td>
             </tr>
           ))}
         </tbody>

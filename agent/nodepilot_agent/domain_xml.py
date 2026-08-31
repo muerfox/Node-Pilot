@@ -18,6 +18,19 @@ _BUS_XML_NAME = {"VIRTIO": "virtio", "VIRTIO_SCSI": "scsi", "SATA": "sata", "IDE
 _BLOCK_BACKED_STORAGE_TYPES = {"LVM", "LVM_THIN", "ZFS", "CEPH_RBD"}
 
 
+def _resolve_nic_bridge(nic: dict) -> str:
+    """A VLAN-tagged network's VM NICs attach to a dedicated per-VLAN
+    bridge, never the network's own (uplink) bridge directly -- see
+    nodepilot_agent.network.ensure_vlan_network. `vlan_bridge_name` is a
+    pure naming function (no subprocess/libvirt calls), so importing it
+    here doesn't compromise this module's "no I/O" property."""
+    from nodepilot_agent.network import vlan_bridge_name
+
+    bridge = nic.get("bridge", "vmbr0")
+    vlan_id = nic.get("vlan")
+    return vlan_bridge_name(bridge, vlan_id) if vlan_id else bridge
+
+
 def _disk_source(disk: dict) -> tuple[str, str, str]:
     """Returns (disk_type_attr, source_element_xml, driver_format) for one
     disk payload dict."""
@@ -76,7 +89,7 @@ def build_domain_xml(payload: dict) -> str:
     nics_xml = []
     for nic in payload.get("nics", []):
         model = nic.get("model", "VIRTIO").lower()
-        bridge = escape(nic.get("bridge", "vmbr0"))
+        bridge = escape(_resolve_nic_bridge(nic))
         mac = escape(nic["mac_address"])
         nics_xml.append(
             f'<interface type="bridge">'

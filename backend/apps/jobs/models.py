@@ -23,6 +23,8 @@ class JobType(models.TextChoices):
     DISK_DETACH = "DISK_DETACH", "Detach disk"
     NIC_ATTACH = "NIC_ATTACH", "Attach NIC"
     NIC_DETACH = "NIC_DETACH", "Detach NIC"
+    NETWORK_CREATE = "NETWORK_CREATE", "Create network"
+    NETWORK_DELETE = "NETWORK_DELETE", "Delete network"
     SNAPSHOT_CREATE = "SNAPSHOT_CREATE", "Create snapshot"
     SNAPSHOT_DELETE = "SNAPSHOT_DELETE", "Delete snapshot"
     SNAPSHOT_ROLLBACK = "SNAPSHOT_ROLLBACK", "Roll back snapshot"

@@ -23,7 +23,7 @@ def storage(node):
 
 @pytest.fixture
 def network(node):
-    return Network.objects.create(node=node, name="prod", bridge="vmbr0")
+    return Network.objects.create(node=node, name="prod", bridge="vmbr0", vlan_id=120)
 
 
 @pytest.fixture
@@ -118,3 +118,10 @@ def test_attach_and_detach_nic(vm, network, user, monkeypatch):
     assert not vm.nics.filter(pk=nic.pk).exists()
     assert any(name == "ATTACH_NIC" for name, _ in calls)
     assert any(name == "DETACH_NIC" for name, _ in calls)
+    # Regression: ATTACH_NIC/DETACH_NIC payloads used to omit `vlan`
+    # entirely, so a NIC on a VLAN-tagged network attached to the raw
+    # (untagged) bridge with no isolation from other networks sharing it.
+    attach_payload = next(payload for name, payload in calls if name == "ATTACH_NIC")
+    detach_payload = next(payload for name, payload in calls if name == "DETACH_NIC")
+    assert attach_payload["vlan"] == 120
+    assert detach_payload["vlan"] == 120

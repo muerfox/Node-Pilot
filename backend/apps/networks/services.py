@@ -1,8 +1,9 @@
 """
-IPAM allocation (section 23). Address rows are created lazily as they are
-first touched rather than pre-materializing an entire subnet, but
-allocation itself is serialized per-subnet with a Redis lock so two
-concurrent VM provisions can never be handed the same address.
+Network provisioning (section 22) and IPAM allocation (section 23).
+Address rows are created lazily as they are first touched rather than
+pre-materializing an entire subnet, but allocation itself is serialized
+per-subnet with a Redis lock so two concurrent VM provisions can never be
+handed the same address.
 """
 from __future__ import annotations
 
@@ -10,7 +11,9 @@ from django.db import transaction
 
 from apps.common.exceptions import NodePilotAPIException
 from apps.common.locks import RedisLock
-from apps.networks.models import IPAddress, IPAddressState, IPPool, Subnet
+from apps.jobs.models import JobType
+from apps.jobs.services import create_job
+from apps.networks.models import IPAddress, IPAddressState, IPPool, Network, NetworkStatus, Subnet
 
 
 class NoAvailableIPAddress(NodePilotAPIException):
@@ -82,3 +85,42 @@ def find_free_ip(subnet: Subnet) -> str | None:
             if existing is None or existing.state == IPAddressState.AVAILABLE:
                 return address
     return None
+
+
+def create_network(*, node, name: str, type: str, bridge: str, vlan_id: int | None, dhcp_enabled: bool, requested_by) -> tuple[Network, "Job"]:
+    """Creates the Network row (status INACTIVE until the agent confirms
+    the bridge -- and, for a VLAN network, its dedicated per-VLAN bridge
+    plus tagged uplink -- actually exists) and dispatches CREATE_NETWORK.
+    The HTTP handler never blocks on the actual provisioning (rule 4/5)."""
+    network = Network.objects.create(
+        node=node, name=name, type=type, bridge=bridge, vlan_id=vlan_id, dhcp_enabled=dhcp_enabled, status=NetworkStatus.INACTIVE,
+    )
+    job = create_job(type=JobType.NETWORK_CREATE, resource_type="Network", resource_id=str(network.uuid), organization=node.organization, node=node, created_by=requested_by)
+    transaction.on_commit(lambda: _enqueue_create_network(job.pk, network.pk))
+    return network, job
+
+
+def delete_network(network: Network, requested_by) -> "Job":
+    """Dispatches DELETE_NETWORK; the Network row itself is only removed
+    once the agent confirms the bridge (and any VLAN uplink) is actually
+    torn down -- see apps.networks.tasks.delete_network_task. Until then
+    it's left visible with its current status so a failed teardown isn't
+    silently reported as done."""
+    job = create_job(
+        type=JobType.NETWORK_DELETE, resource_type="Network", resource_id=str(network.uuid),
+        organization=network.node.organization, node=network.node, created_by=requested_by,
+    )
+    transaction.on_commit(lambda: _enqueue_delete_network(job.pk, network.pk))
+    return job
+
+
+def _enqueue_create_network(job_id: int, network_id: int) -> None:
+    from apps.networks.tasks import create_network_task
+
+    create_network_task.delay(job_id, network_id)
+
+
+def _enqueue_delete_network(job_id: int, network_id: int) -> None:
+    from apps.networks.tasks import delete_network_task
+
+    delete_network_task.delay(job_id, network_id)

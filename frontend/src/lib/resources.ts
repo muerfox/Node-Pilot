@@ -120,6 +120,7 @@ export const storagePools = {
 export const networks = {
   list: (params?: Params) => api.get<Paginated<NodePilotNetwork>>("networks/", params),
   create: (body: Partial<NodePilotNetwork>) => api.post<NodePilotNetwork>("networks/", body),
+  remove: (uuid: string) => api.delete<JobRef>(`networks/${uuid}/`),
 };
 
 export const subnets = {

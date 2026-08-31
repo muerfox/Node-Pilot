@@ -96,7 +96,9 @@ API-token auth, organizations/projects/quotas, the Job state machine,
 node registration + heartbeat + computed online/offline status, the
 agent protocol + WebSocket transport + Redis-correlated RPC, the full VM
 provisioning/lifecycle/clone state machine with rollback-on-failure
-cleanup, IPAM allocation, storage-capability-aware snapshots, chunked
+cleanup, network create/delete provisioning with real per-VLAN traffic
+isolation (a dedicated bridge per VLAN, never a shared/untagged one),
+IPAM allocation and reservation, storage-capability-aware snapshots, chunked
 image upload with streaming checksum verification, webhook delivery with
 HMAC signing + exponential backoff, Redis-backed short-term metrics for
 both hosts and individual VMs (the agent's `vm_metrics_loop` computes
@@ -288,3 +290,66 @@ one that would have broken real deployments:
   Networks page. `backend/tests/test_ipam.py`.
 
 Not every "no test coverage" lead panned out into a bug: `apps.nodes.tasks.sweep_offline_nodes`/`reconcile_nodes` (node offline detection and the drift-reconciliation sweep, both correctly registered in `CELERY_BEAT_SCHEDULE`) had zero test coverage but turned out to already be correct, including the trickier case of a node flapping offline, recovering, then going offline again without double-firing or dropping the second `NODE_OFFLINE` event. `backend/tests/test_node_health.py` now locks that in.
+
+## Network provisioning was never wired up, and VLAN isolation didn't work at all
+
+The single largest gap found this way: `NetworkViewSet` was a plain
+`ModelViewSet` with no `perform_create`/`destroy` override, so creating
+or deleting a `Network` through the API was a database-only operation.
+`CREATE_NETWORK`/`DELETE_NETWORK` were defined in the Agent Protocol and
+fully implemented on the agent side
+(`nodepilot_agent.operations.network_ops`, using `nodepilot_agent.network`'s
+`create_bridge`/`create_vlan_interface`/`attach_to_bridge` primitives) --
+but the controller never dispatched them, so the bridge a Network row
+claimed to represent was never actually created (or torn down) on the
+hypervisor. `attach_to_bridge` in particular had zero callers anywhere.
+
+Separately, and independently of that wiring gap: the per-NIC `vlan`
+field the controller has always computed and sent on `CREATE_VM`'s NIC
+payloads (`nic.vlan or nic.network.vlan_id`) was read nowhere on the
+agent side -- `build_domain_xml`'s NIC loop never looked at it, and
+`ATTACH_NIC`/`DETACH_NIC`'s payloads didn't even include it. Two VM NICs
+on networks that only differed by `vlan_id` but happened to share the
+same base bridge string ended up on the exact same untagged L2 segment --
+no isolation at all, despite the platform presenting VLANs as configured
+and enforced.
+
+Fixed with real per-VLAN isolation rather than a `<vlan>` XML tag (which
+libvirt only honors for standard Linux bridges under specific
+vlan-filtering configurations that aren't guaranteed here): every VLAN
+network gets a **dedicated bridge**, distinct from its parent/uplink
+bridge, uplinked through a tagged 802.1Q sub-interface --
+`network.ensure_vlan_network`/`teardown_vlan_network` orchestrate the
+existing (previously unused) `create_vlan_interface` + `attach_to_bridge`
+primitives to build and tear this down, and
+`domain_xml._resolve_nic_bridge` / `network_ops._nic_target_bridge`
+route NIC attachment to that dedicated bridge (named
+`network.vlan_bridge_name`) instead of the raw parent, both for
+`CREATE_VM` and for hot-attach/detach. Two networks that only differ by
+`vlan_id` now always resolve to different bridges -- there is no L2 path
+between them without going out through the tagged uplink. Attaching a
+NIC to a `vlan` that was never provisioned via `CREATE_NETWORK` fails
+with a clear libvirt "no such device" error rather than silently landing
+on the wrong (untagged) segment.
+
+Also fixed along the way: `create_vlan_interface` wasn't actually
+idempotent (a retried `CREATE_NETWORK` would hit a raw `ip link add`
+"File exists" failure), `NetworkSerializer.vlan_id` was spuriously
+`required=True` at the API layer despite the model declaring
+`null=True, blank=True` -- caused by `unique_together`'s
+`UniqueTogetherValidator` requiring an explicit `default=None`, not just
+`allow_null=True`, to treat a participating field as optional -- and
+bridge/vlan_id are now validated against the same Linux interface-name
+and length rules the agent enforces (`IFNAMSIZ` = 15 usable characters,
+tighter still once a VLAN's dedicated-bridge suffix is appended), so a
+bad value is rejected with a clear 400 instead of only failing once the
+job reaches the agent. `Network` update (`PATCH`/`PUT`) is now disallowed
+entirely (`405`, same rule `BackupViewSet` applies to backups) --
+`bridge`/`vlan_id`/`type` are baked into what actually got provisioned at
+create time, and allowing an edit would let the DB row silently diverge
+from the real bridge/VLAN setup with no re-provisioning step to
+reconcile them.
+
+`backend/tests/test_network_provisioning.py`,
+`backend/tests/test_vm_disk_nic_ops.py`,
+`agent/tests/test_vlan_networks.py`, `agent/tests/test_network_ops.py`.

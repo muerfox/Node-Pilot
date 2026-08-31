@@ -411,7 +411,10 @@ def attach_nic_task(self, job_id: int, nic_id: int) -> None:
     def run():
         agent_client.send_operation(
             nic.vm.node, OperationType.ATTACH_NIC, resource_id=str(nic.vm.uuid),
-            payload={"domain_uuid": str(nic.vm.domain_uuid), "bridge": nic.network.bridge, "mac_address": nic.mac_address, "model": nic.model},
+            payload={
+                "domain_uuid": str(nic.vm.domain_uuid), "bridge": nic.network.bridge, "vlan": nic.vlan or nic.network.vlan_id,
+                "mac_address": nic.mac_address, "model": nic.model,
+            },
         )
 
     _disk_or_nic_task(job_id, nic, step=f"Attaching NIC {nic.mac_address}", run_op=run)
@@ -425,7 +428,10 @@ def detach_nic_task(self, job_id: int, nic_id: int) -> None:
     def run():
         agent_client.send_operation(
             vm.node, OperationType.DETACH_NIC, resource_id=str(vm.uuid),
-            payload={"domain_uuid": str(vm.domain_uuid), "bridge": nic.network.bridge, "mac_address": nic.mac_address, "model": nic.model},
+            payload={
+                "domain_uuid": str(vm.domain_uuid), "bridge": nic.network.bridge, "vlan": nic.vlan or nic.network.vlan_id,
+                "mac_address": nic.mac_address, "model": nic.model,
+            },
         )
         nic.delete()
 
