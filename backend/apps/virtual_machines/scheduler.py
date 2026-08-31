@@ -67,7 +67,7 @@ class CapacityWeightedScheduler(Scheduler):
             if free_memory_mb < request.memory_mb:
                 continue
 
-            free_storage_gb = node.storage_available_gb
+            free_storage_gb = node.storage_available_gb - _pending_storage_gb(node)
             if free_storage_gb < request.disk_gb:
                 continue
 
@@ -90,6 +90,24 @@ def _used_vcpu(node) -> int:
     return sum(
         VirtualMachine.objects.filter(node=node, status=VMStatus.RUNNING).values_list("cpu_count", flat=True)
     )
+
+
+def _pending_storage_gb(node) -> int:
+    """Disk space already committed on this node since the last
+    heartbeat. `node.storage_available_gb` is only as fresh as that
+    heartbeat -- a disk created moments ago (its space consumed on the
+    host regardless of whether the VM has ever been started, unlike
+    memory/CPU) isn't reflected in it yet. Without this, two VMs
+    scheduled to the same node within one heartbeat interval could each
+    individually pass the capacity check and together still overcommit
+    real storage. Rounds up so this never *underestimates* what's
+    already spoken for."""
+    from apps.virtual_machines.models import VMDisk
+
+    if node.last_seen is None:
+        return 0
+    total_bytes = sum(VMDisk.objects.filter(vm__node=node, created_at__gte=node.last_seen).values_list("size_bytes", flat=True))
+    return -(-total_bytes // (1024**3))  # ceiling division
 
 
 def get_scheduler() -> Scheduler:

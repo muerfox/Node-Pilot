@@ -353,3 +353,27 @@ reconcile them.
 `backend/tests/test_network_provisioning.py`,
 `backend/tests/test_vm_disk_nic_ops.py`,
 `agent/tests/test_vlan_networks.py`, `agent/tests/test_network_ops.py`.
+
+## Scheduler storage-overcommit race
+
+`apps.virtual_machines.scheduler` (which node a VM lands on when none is
+specified) had zero test coverage. Its CPU headroom check was already
+careful -- it sums the vCPU count of only *running* VMs against a
+node's static, overcommit-adjusted ceiling, so provisioned-but-stopped
+VMs correctly don't count against it. Its storage headroom check wasn't:
+it compared the request directly against `node.storage_available_gb`,
+a value that's only as fresh as the node's last heartbeat. Unlike
+memory/CPU, a VM's disk consumes real host storage the moment it's
+created, regardless of whether the VM has ever started -- so two VMs
+scheduled to the same node within one heartbeat interval could each
+individually pass the capacity check and, together, overcommit real
+storage. Fixed by subtracting disks created since the node's last
+heartbeat (`scheduler._pending_storage_gb`) from its reported free
+space -- the same "local DB is more current than the last heartbeat"
+adjustment the CPU check already made, applied to the one resource
+(disk space) that's actually consumed immediately. Also caught while
+writing the tests: an early draft of the regression test for this exact
+race passed even before the fix, because it left `memory_available_mb`
+at the `Node` model's zero default -- the assertion was accidentally
+exercising the memory check, not the storage one it claimed to.
+`backend/tests/test_scheduler.py`.
