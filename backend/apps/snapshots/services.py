@@ -37,7 +37,12 @@ def create_snapshot(vm, *, name: str, description: str, requested_by) -> "Job":
 
 
 def delete_snapshot(snapshot: Snapshot, requested_by) -> "Job":
-    if snapshot.status != SnapshotStatus.READY:
+    # ERROR is included (unlike rollback, which needs a genuinely READY
+    # snapshot) so a snapshot that failed mid-create -- or a delete/
+    # rollback attempt that itself failed -- always has a way out rather
+    # than becoming a permanently stuck, undeletable row. Mirrors
+    # VMStatus's own delete-from-ERROR allowance (_ALLOWED_FROM[VM_DELETE]).
+    if snapshot.status not in (SnapshotStatus.READY, SnapshotStatus.ERROR):
         raise InvalidStateTransition(f"Cannot delete a snapshot in status {snapshot.status}")
     job = create_job(type=JobType.SNAPSHOT_DELETE, resource_type="Snapshot", resource_id=str(snapshot.uuid), organization=snapshot.vm.organization, node=snapshot.vm.node, created_by=requested_by)
     transaction.on_commit(lambda: _enqueue(job.pk, snapshot.pk, "delete"))

@@ -377,3 +377,25 @@ race passed even before the fix, because it left `memory_available_mb`
 at the `Node` model's zero default -- the assertion was accidentally
 exercising the memory check, not the storage one it claimed to.
 `backend/tests/test_scheduler.py`.
+
+## A failed snapshot rollback/delete attempt used to permanently brick the snapshot
+
+`apps.snapshots` (services.py + tasks.py, real business logic behind a
+destructive, dual-locked rollback path) had zero test coverage. Both
+`rollback_snapshot_task` and `delete_snapshot_task` marked the snapshot
+`ERROR` on any failure -- but `delete_snapshot`/`rollback_snapshot` both
+require `status == READY` to even start, so `ERROR` was a dead end: a
+single transient failure (an agent timeout, a momentary lock conflict)
+left an otherwise-perfectly-good snapshot impossible to retry, roll back
+to, or even delete, ever again, short of direct database access. This is
+the same class of bug already fixed once in `apps.backups.tasks
+.restore_backup_task` -- the snapshot/backup *artifact* is unaffected by
+a failed *attempt* to use it -- just not applied here. Fixed by reverting
+to `READY` (rollback: it can only ever have started from `READY` anyway;
+delete: restores whatever status let the attempt start, so a delete
+retry doesn't relabel a snapshot that was already broken for some other
+reason). Also broadened `delete_snapshot` to allow deleting from `ERROR`
+too (mirroring `VMStatus`'s own `_ALLOWED_FROM[VM_DELETE]`, which already
+permits deleting an `ERROR` VM) so a snapshot that failed mid-*create* --
+which correctly stays `ERROR`, since it never became a real artifact --
+still has a way to be cleaned up. `backend/tests/test_snapshots.py`.
