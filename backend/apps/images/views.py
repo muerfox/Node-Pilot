@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from django.http import FileResponse
+from django.http import FileResponse, Http404
+from django.shortcuts import get_object_or_404
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.parsers import FileUploadParser
@@ -16,6 +17,7 @@ from apps.images import storage_backend
 from apps.images.models import Image, ImageStatus, ImageUploadSession, UploadStatus
 from apps.images.serializers import ImageSerializer, ImageUploadSessionSerializer, InitiateUploadSerializer
 from apps.nodes.auth import AgentTokenAuthentication
+from apps.nodes.views import IsAgent
 
 
 class ImageViewSet(OrganizationScopedModelViewSet):
@@ -42,6 +44,31 @@ class ImageViewSet(OrganizationScopedModelViewSet):
             return Response({"error": {"code": "IMAGE_NOT_READY", "message": "Image upload is not complete.", "details": {}}}, status=409)
         path = storage_backend.final_path(image)
         response = FileResponse(open(path, "rb"), as_attachment=True, filename=f"{image.name}.{image.format or 'img'}")
+        return response
+
+
+class AgentImageDownloadView(APIView):
+    """GET /api/v1/agent/images/{uuid}/download/ -- an agent fetches an
+    image's bytes to seed a new VM disk from it (template deployment
+    with a base image, section 16). Agent-token authenticated only, and
+    scoped to the requesting agent's own organization -- images are
+    never public, so this must not let one org's agent fetch another
+    org's private image by UUID. A 404 (not 403) for a cross-tenant hit
+    so existence of the image isn't leaked either."""
+
+    authentication_classes = [AgentTokenAuthentication]
+    permission_classes = [IsAgent]
+
+    def get(self, request, uuid):
+        image = get_object_or_404(Image, uuid=uuid)
+        if image.organization_id != request.agent.node.organization_id:
+            raise Http404()
+        if image.status != ImageStatus.READY:
+            return Response({"error": {"code": "IMAGE_NOT_READY", "message": "Image upload is not complete.", "details": {}}}, status=409)
+        path = storage_backend.final_path(image)
+        response = FileResponse(open(path, "rb"))
+        response["X-Image-Sha256"] = image.sha256
+        response["X-Image-Format"] = image.format
         return response
 
 

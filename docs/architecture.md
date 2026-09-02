@@ -399,3 +399,62 @@ too (mirroring `VMStatus`'s own `_ALLOWED_FROM[VM_DELETE]`, which already
 permits deleting an `ERROR` VM) so a snapshot that failed mid-*create* --
 which correctly stays `ERROR`, since it never became a real artifact --
 still has a way to be cleaned up. `backend/tests/test_snapshots.py`.
+
+## Deploying a VM from a Template produced a completely blank disk
+
+The largest gap found this way: `Template.image` -- a required FK, e.g.
+"Ubuntu 24.04" -- was never referenced anywhere in VM provisioning.
+`apps.vm_templates.services.create_vm_from_template`'s disk spec had no
+mention of it, and the agent's `create_disk` always made a fresh blank
+volume; there was no image-to-disk copy mechanism anywhere on either
+side. Deploying "from a template" produced a VM with an empty,
+unformatted disk -- nothing bootable, regardless of which image the
+template named.
+
+Closed end to end:
+
+- **`VMDisk.source_image`** (new FK to `images.Image`, nullable):
+  provenance -- which image, if any, this disk was seeded from at
+  creation time. `create_vm_from_template` sets it on the template's
+  boot disk; `create_vm` persists whatever `create_vm_from_template`
+  passes through.
+- **`apps.images.views.AgentImageDownloadView`** (new,
+  `GET /api/v1/agent/images/{uuid}/download/`): images live centrally on
+  the controller's own storage, never per-node
+  (`apps.images.storage_backend`'s own docstring already said as much),
+  so any node's agent can fetch any of its own organization's images
+  over the same agent-token-authenticated HTTP channel already used for
+  heartbeats -- this works identically regardless of which node's
+  storage pool the new disk lands on, no agent-to-agent transfer needed.
+  Agent-token authenticated only, and scoped to the requesting agent's
+  own organization (404, not 403, on a cross-tenant hit, so existence
+  isn't leaked either) -- images are never public.
+  `IsAgentOrHasImageView` had apparently been scaffolded for exactly
+  this and then never wired to anything; this is a fresh view, not a
+  reuse of it.
+- **`provision_vm`'s CREATE_DISK step** now includes `image_uuid`/
+  `image_sha256`/`image_format` in the payload when `disk.source_image_id`
+  is set, and raises the RPC timeout to 3600s for that case -- the
+  default `AGENT_RPC_TIMEOUT_SECONDS` (30s) is nowhere near enough to
+  download and convert a multi-GB OS image (same reasoning as backups'
+  `CREATE_BACKUP`/`RESTORE_BACKUP` timeout).
+- **`nodepilot_agent.image_fetch.download_image`**: streams the image to
+  a local temp file over `httpx`, verifying its sha256 before it's ever
+  handed to `qemu-img`.
+- **`disk_ops.create_disk`**: after creating the (correctly sized/typed)
+  blank volume as before, if an image was specified it runs
+  `qemu-img convert -n -O <target_format> <downloaded_image> <volume_id>`
+  to seed it -- `-n` writes into the volume already created instead of
+  letting qemu-img create/resize a target to match the image's own size,
+  since the requested disk can legitimately be larger than the base
+  image (the guest just sees extra free space). This works unmodified
+  for block-backed targets (LVM/LVM-thin/ZFS/Ceph RBD) too, since
+  `qemu-img convert` can write directly to a block device -- no new
+  `StorageBackend` method needed.
+- `create_vm_from_template` also now rejects deploying from a template
+  whose image isn't `READY` (`TemplateImageNotReady`, 409) instead of
+  discovering that failure deep inside the async provisioning job.
+
+`backend/tests/test_vm_templates.py`,
+`backend/tests/test_agent_image_download.py`,
+`agent/tests/test_image_fetch.py`, `agent/tests/test_disk_ops.py`.

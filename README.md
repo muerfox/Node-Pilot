@@ -65,7 +65,7 @@ make agent-test
 make cli-test
 ```
 
-The backend suite (157 tests) runs against SQLite with a faked Redis (no
+The backend suite (167 tests) runs against SQLite with a faked Redis (no
 external services required); it covers the RBAC policy engine
 (including a cross-tenant authorization regression and the WebSocket
 ticket auth flow -- see `docs/architecture.md`'s security review
@@ -78,20 +78,23 @@ masking, backup-schedule cron validation plus Celery Beat sync on
 update, node offline detection/reconciliation, network create/delete
 provisioning, the scheduler's CPU/memory/storage capacity checks
 (including a storage-overcommit race across two near-simultaneous
-schedules), and snapshot create/rollback/delete (including a failed
+schedules), snapshot create/rollback/delete (including a failed
 rollback/delete attempt no longer permanently bricking the snapshot),
-all with the agent
-RPC layer mocked. The agent suite (63 tests, +3 skipped when `qemu-img`
+and deploying a VM from a Template actually seeding its disk from the
+template's image (including the agent-authenticated image-download
+endpoint's cross-tenant isolation), all with the agent
+RPC layer mocked. The agent suite (72 tests, +3 skipped when `qemu-img`
 isn't installed) covers protocol framing, domain-XML generation
 (including XML-attribute-injection safety, block- vs. file-backed disk
 format selection, and per-VLAN bridge resolution), the storage backends'
 path-traversal and pool-scope protection, operation dispatch, VLAN
-network provisioning/teardown, the real CPU% delta computation behind
+network provisioning/teardown, seeding a new disk from a downloaded
+image via `qemu-img convert`, the real CPU% delta computation behind
 per-VM metrics, and a real S3 upload/download round trip (via `moto`)
 for the S3/MinIO/Ceph-RGW backup target. The CLI suite (8 tests) covers
 the HTTP client and command wiring. The frontend (`npm run typecheck &&
 npm run lint && npm run build`) type-checks, lints clean, and builds to
-a 147 KB gzipped bundle (noVNC accounts for most of that). 228
+a 147 KB gzipped bundle (noVNC accounts for most of that). 247
 automated tests pass as of this build.
 
 ## CLI

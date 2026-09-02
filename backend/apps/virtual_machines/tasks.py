@@ -107,15 +107,32 @@ def provision_vm(self, job_id: int, vm_id: int) -> None:
                 vm.save(update_fields=["provisioning_state"])
 
             with job_run(job, "Creating disks"):
-                for disk in vm.disks.select_related("storage").all():
-                    data = agent_client.send_operation(
-                        vm.node, OperationType.CREATE_DISK, resource_id=str(vm.uuid),
-                        payload={
-                            "disk_uuid": str(disk.uuid), "storage_id": disk.storage_id, "storage_path": disk.storage.path,
-                            "storage_type": disk.storage.type, "size_bytes": disk.size_bytes, "format": disk.format,
-                            "name": disk.name,
-                        },
-                    )
+                for disk in vm.disks.select_related("storage", "source_image").all():
+                    payload = {
+                        "disk_uuid": str(disk.uuid), "storage_id": disk.storage_id, "storage_path": disk.storage.path,
+                        "storage_type": disk.storage.type, "size_bytes": disk.size_bytes, "format": disk.format,
+                        "name": disk.name,
+                    }
+                    disk_timeout = None
+                    if disk.source_image_id:
+                        # Deploying from a Template (section 16): seed
+                        # this disk from the template's base image
+                        # instead of leaving it blank. The agent fetches
+                        # the image itself over HTTP from the controller
+                        # (apps.images.views.AgentImageDownloadView) --
+                        # works identically regardless of which node's
+                        # storage pool the image was originally
+                        # registered against, since images live centrally
+                        # on the controller, not per-node.
+                        payload["image_uuid"] = str(disk.source_image.uuid)
+                        payload["image_sha256"] = disk.source_image.sha256
+                        payload["image_format"] = disk.source_image.format
+                        # The default AGENT_RPC_TIMEOUT_SECONDS (30s) is
+                        # nowhere near enough to download and convert a
+                        # multi-GB OS image -- same reasoning as backups'
+                        # CREATE_BACKUP/RESTORE_BACKUP timeout.
+                        disk_timeout = 3600
+                    data = agent_client.send_operation(vm.node, OperationType.CREATE_DISK, resource_id=str(vm.uuid), payload=payload, timeout=disk_timeout)
                     disk.volume_id = data.get("volume_id", "")
                     disk.device = data.get("device", disk.device)
                     # The agent's response is authoritative for format --

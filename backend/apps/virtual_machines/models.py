@@ -124,6 +124,10 @@ class VirtualMachine(NodePilotModel):
 class VMDisk(NodePilotModel):
     vm = models.ForeignKey(VirtualMachine, on_delete=models.CASCADE, related_name="disks")
     storage = models.ForeignKey("storage.StoragePool", on_delete=models.PROTECT, related_name="disks")
+    source_image = models.ForeignKey(
+        "images.Image", on_delete=models.SET_NULL, null=True, blank=True, related_name="disks_created_from",
+        help_text="Set when this disk was seeded from an image at creation time (e.g. deploying from a Template) -- provenance only; CREATE_DISK consumes it once and never re-reads it after.",
+    )
 
     name = models.CharField(max_length=255)
     volume_id = models.CharField(max_length=255, blank=True, default="", help_text="Agent/storage-backend-assigned volume identifier or path.")

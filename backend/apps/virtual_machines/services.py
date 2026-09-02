@@ -109,6 +109,7 @@ def create_vm(
         VMDisk.objects.create(
             vm=vm,
             storage=disk_spec["storage"],
+            source_image=disk_spec.get("source_image"),
             name=disk_spec.get("name", f"disk-{index}"),
             bus=disk_spec.get("bus", "VIRTIO"),
             size_bytes=disk_spec["size_bytes"],

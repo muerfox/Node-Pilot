@@ -70,7 +70,7 @@ class Dispatcher:
             return await loop.run_in_executor(None, vm_ops.migrate_vm, payload, resource_id)
 
         if op == OperationType.CREATE_DISK:
-            return await loop.run_in_executor(None, disk_ops.create_disk, payload)
+            return await loop.run_in_executor(None, disk_ops.create_disk, payload, self.config)
         if op == OperationType.DELETE_DISK:
             return await loop.run_in_executor(None, disk_ops.delete_disk, payload)
         if op == OperationType.RESIZE_DISK:
