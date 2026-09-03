@@ -11,6 +11,7 @@ from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 
 from apps.audit.services import log_from_request
+from apps.common.locks import LockAcquisitionError, try_lock
 from apps.common.permissions import HasResourcePermission
 from apps.common.viewsets import OrganizationScopedModelViewSet
 from apps.images import storage_backend
@@ -140,7 +141,21 @@ class ChunkUploadView(APIView):
         if uploaded_file is None:
             return Response({"error": {"code": "VALIDATION_FAILED", "message": "No file body provided.", "details": {}}}, status=400)
 
-        written = storage_backend.write_chunk(session, index, uploaded_file)
+        # Two concurrent PUTs for the same session (a client/proxy retry
+        # racing the original still-in-flight request is the realistic
+        # case, not malice) could otherwise both read the same
+        # next_chunk_index before either has saved its increment, both
+        # pass write_chunk's index check, and both write into the same
+        # destination file -- corrupting it in a way that (usually) only
+        # surfaces later as a confusing checksum/size mismatch at
+        # finalize. Serialize chunk writes per session instead -- fail
+        # fast (non-blocking) rather than making the losing request hang
+        # until the winner finishes; the client is expected to retry.
+        try:
+            with try_lock(f"image-upload:{session.uuid}", ttl_seconds=60):
+                written = storage_backend.write_chunk(session, index, uploaded_file)
+        except LockAcquisitionError:
+            return Response({"error": {"code": "UPLOAD_BUSY", "message": "Another chunk for this session is still being written.", "details": {}}}, status=409)
         return Response({"received_bytes": session.received_bytes, "next_chunk_index": session.next_chunk_index, "chunk_bytes": written})
 
 
@@ -149,6 +164,17 @@ class FinalizeUploadView(APIView):
 
     def post(self, request, uuid):
         session = _get_session(uuid, request.user)
+        if session.status == UploadStatus.COMPLETED:
+            # Idempotent: a client retry of a request that actually
+            # succeeded server-side (e.g. the response timed out even
+            # though finalize_upload had already completed) must return
+            # the existing success, not re-run finalize_upload -- its
+            # temp file was already moved into place by the first call,
+            # so a second attempt would find "no chunks uploaded" and,
+            # without this guard, mark an already-good image FAILED.
+            return Response(ImageSerializer(session.image).data)
+        if session.status != UploadStatus.UPLOADING:
+            return Response({"error": {"code": "UPLOAD_NOT_ACTIVE", "message": f"Session is {session.status}, not ready to finalize.", "details": {}}}, status=409)
         try:
             checksum, size = storage_backend.finalize_upload(session)
         except Exception as exc:

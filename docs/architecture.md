@@ -458,3 +458,38 @@ Closed end to end:
 `backend/tests/test_vm_templates.py`,
 `backend/tests/test_agent_image_download.py`,
 `agent/tests/test_image_fetch.py`, `agent/tests/test_disk_ops.py`.
+
+## Listing or retrieving an image 500'd -- always
+
+The most basic bug found this way: `ImageSerializer` declared a
+`storage` field but never listed it in `Meta.fields`. DRF's
+`ModelSerializer` treats a declared-but-unlisted field as a hard error
+(`AssertionError`, not a silently-dropped field), so *every*
+serialization of an `Image` crashed with a 500 -- including
+`ImageViewSet`'s plain `list`/`retrieve` (the Images page's basic
+"show me the images" request), `InitiateUploadView`'s own 201 response,
+and `FinalizeUploadView`'s. This had zero test coverage before now, on
+either the serializer or anything downstream of it. Fixed by adding
+`storage` to `Meta.fields`. `backend/tests/test_image_upload.py`.
+
+While covering the rest of the chunked upload flow (also previously
+untested) for the same reason, two more real bugs turned up:
+
+- **A successful finalize followed by a client retry un-finalized it.**
+  `FinalizeUploadView` had no idempotency guard. `finalize_upload()`
+  moves the assembled temp file into its final location on success, so
+  calling finalize a second time (a client retry after a response that
+  timed out even though the first call actually succeeded server-side --
+  an ordinary scenario for any non-idempotent POST) found no temp file
+  left, raised "no chunks uploaded", and the view's except-handler
+  dutifully marked the already-successfully-uploaded `Image` `FAILED`.
+  Fixed by returning the existing success response when the session is
+  already `COMPLETED`, instead of re-running `finalize_upload`.
+- **Concurrent chunk writes for the same session could corrupt the
+  upload.** `write_chunk`'s read-`next_chunk_index`-then-write-then-
+  increment sequence had no locking, so two concurrent `PUT`s for the
+  same session (a client/proxy retry racing the still-in-flight original
+  is the realistic trigger, not malice) could both pass the index check
+  and both write into the same destination file. Fixed with a
+  non-blocking per-session lock (`try_lock`, fail fast with `409
+  UPLOAD_BUSY` rather than making the losing request hang).

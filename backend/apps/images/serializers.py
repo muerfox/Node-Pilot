@@ -9,7 +9,13 @@ class ImageSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Image
-        fields = ["uuid", "name", "version", "type", "format", "size_bytes", "checksum_algorithm", "sha256", "source", "status", "metadata", "created_at"]
+        # `storage` is declared above as a SlugRelatedField (read-only,
+        # UUID) precisely so image list/retrieve responses show which
+        # pool it lives on -- it must actually be listed here too, or
+        # DRF's own ModelSerializer field-name assertion fires on every
+        # serialization attempt: any declared field not also present in
+        # Meta.fields is a hard error, not silently dropped.
+        fields = ["uuid", "name", "version", "type", "format", "storage", "size_bytes", "checksum_algorithm", "sha256", "source", "status", "metadata", "created_at"]
         read_only_fields = ["uuid", "size_bytes", "sha256", "status", "created_at"]
 
 
