@@ -65,11 +65,12 @@ make agent-test
 make cli-test
 ```
 
-The backend suite (177 tests) runs against SQLite with a faked Redis (no
+The backend suite (183 tests) runs against SQLite with a faked Redis (no
 external services required); it covers the RBAC policy engine
-(including a cross-tenant authorization regression and the WebSocket
-ticket auth flow -- see `docs/architecture.md`'s security review
-section), quota enforcement, IPAM allocation and reservation, distributed
+(including a cross-tenant authorization regression, scoped API tokens
+actually being confined to their declared permission subset, and the
+WebSocket ticket auth flow -- see `docs/architecture.md`'s security
+review section), quota enforcement, IPAM allocation and reservation, distributed
 locking, the Job state machine, a full VM-provisioning run, disk/NIC
 hot-plug, per-VM metrics ingest, webhook delivery's SSRF-redirect and
 DNS-rebinding protection, disk-format propagation onto the domain XML,
@@ -96,7 +97,7 @@ per-VM metrics, and a real S3 upload/download round trip (via `moto`)
 for the S3/MinIO/Ceph-RGW backup target. The CLI suite (8 tests) covers
 the HTTP client and command wiring. The frontend (`npm run typecheck &&
 npm run lint && npm run build`) type-checks, lints clean, and builds to
-a 147 KB gzipped bundle (noVNC accounts for most of that). 257
+a 147 KB gzipped bundle (noVNC accounts for most of that). 263
 automated tests pass as of this build.
 
 ## CLI

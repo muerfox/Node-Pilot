@@ -20,6 +20,16 @@ depending on whether an object exists yet:
   * Everything else (create, and non-detail custom actions): the
     organization must be resolvable *before* the view body runs, via
     `view.get_organization()`.
+
+Independent of all three: if the request was authenticated via a scoped
+`APIToken` (apps.authentication.auth.APITokenAuthentication sets
+`request.api_token`), the required codename must also be in that token's
+own `scopes` list. This runs before anything else below -- a token
+scoped to e.g. `["vm.view"]` must never be able to reach `vm.delete`
+just because the user who created it could, regardless of which
+organization or object is involved. An empty `scopes` list means
+"this token carries the user's full permission set" (unscoped), matching
+APIToken.scopes's own documented default.
 """
 from __future__ import annotations
 
@@ -35,6 +45,8 @@ class HasResourcePermission(BasePermission):
         codename = self._resolve_codename(view)
         if codename is None:
             return False  # View didn't declare a requirement; fail closed.
+        if not self._token_permits(request, codename):
+            return False
 
         if getattr(view, "detail", False):
             return True  # Deferred to has_object_permission.
@@ -53,10 +65,19 @@ class HasResourcePermission(BasePermission):
         codename = self._resolve_codename(view)
         if codename is None:
             return False
+        if not self._token_permits(request, codename):
+            return False
         organization = self._resolve_organization_from_object(view, obj)
         from apps.permissions.policies import has_permission
 
         return has_permission(request.user, organization, codename)
+
+    @staticmethod
+    def _token_permits(request, codename: str) -> bool:
+        token = getattr(request, "api_token", None)
+        if token is None or not token.scopes:
+            return True  # A JWT/session request, or an unscoped (full-access) token.
+        return codename in token.scopes
 
     @staticmethod
     def _resolve_codename(view) -> str | None:

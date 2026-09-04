@@ -493,3 +493,29 @@ untested) for the same reason, two more real bugs turned up:
   and both write into the same destination file. Fixed with a
   non-blocking per-session lock (`try_lock`, fail fast with `409
   UPLOAD_BUSY` rather than making the losing request hang).
+
+## API tokens scoped to a permission subset actually carried the user's full access
+
+`APIToken.scopes` ("List of permission codenames this token is limited
+to, or `[]` for the user's full permission set") was fully user-settable
+at token creation -- `APITokenCreateSerializer.validate_scopes` even
+validates it against the real permission catalog -- but was never
+consulted anywhere in the authorization path. A user creating a token
+scoped to e.g. `["node.view"]`, believing it limited some third-party
+integration to read-only node access, actually handed out a token
+carrying their full permission set: `HasResourcePermission` only ever
+checked the *user's* role-based permissions, never the *token's* own
+scope restriction, whether the token was reached via `list`, a detail
+action, or `create`.
+
+Fixed with `HasResourcePermission._token_permits`, run unconditionally
+before every other check in both `has_permission` and
+`has_object_permission`: if the request carries `request.api_token`
+(set by `APITokenAuthentication` when a request authenticates with
+`Authorization: Token ...`, as opposed to a JWT session) and that
+token's `scopes` is non-empty, the view's required codename must be in
+it. An empty `scopes` list still means "this token's full-access",
+matching the field's own documented default, so existing unscoped
+tokens are unaffected. `backend/tests/test_api_token_scopes.py` --
+confirmed load-bearing by reverting the fix and re-running it (a
+`node.view`-scoped token could create and delete nodes).
