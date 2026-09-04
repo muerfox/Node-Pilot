@@ -80,7 +80,10 @@ class VirtualMachineViewSet(OrganizationScopedModelViewSet):
             for d in data.get("disks", [])
         ]
         nics = [
-            {"network": n["network"], "model": n["model"], "vlan": n.get("vlan"), "mac_address": n.get("mac_address") or None, "bootable": n["bootable"]}
+            {
+                "network": n["network"], "model": n["model"], "vlan": n.get("vlan"), "mac_address": n.get("mac_address") or None,
+                "bootable": n["bootable"], "rate_limit_mbps": n.get("rate_limit_mbps"),
+            }
             for n in data.get("nics", [])
         ]
 
@@ -198,7 +201,10 @@ class VirtualMachineViewSet(OrganizationScopedModelViewSet):
         network = Network.objects.filter(uuid=request.data.get("network")).first()
         if network is None:
             return Response({"error": {"code": "VALIDATION_FAILED", "message": "network not found", "details": {}}}, status=400)
-        nic, job = services.attach_nic(vm, network=network, model=request.data.get("model", "VIRTIO"), vlan=request.data.get("vlan"), requested_by=request.user)
+        nic, job = services.attach_nic(
+            vm, network=network, model=request.data.get("model", "VIRTIO"), vlan=request.data.get("vlan"),
+            rate_limit_mbps=request.data.get("rate_limit_mbps"), requested_by=request.user,
+        )
         log_from_request(request, action="VM_NIC_ATTACH", resource_type="VirtualMachine", resource_id=str(vm.uuid), organization=vm.organization)
         return Response({"nic_id": str(nic.uuid), "job_id": str(job.uuid), "status": "queued"}, status=status.HTTP_202_ACCEPTED)
 

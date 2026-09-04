@@ -125,6 +125,7 @@ def create_vm(
             mac_address=nic_spec.get("mac_address") or generate_mac_address(),
             model=nic_spec.get("model", "VIRTIO"),
             vlan=nic_spec.get("vlan"),
+            rate_limit_mbps=nic_spec.get("rate_limit_mbps"),
             bootable=nic_spec.get("bootable", index == 0),
             boot_index=index,
         )
@@ -319,10 +320,13 @@ def resize_disk(vm, disk: VMDisk, new_size_gb: int, requested_by) -> "Job":
 
 
 @transaction.atomic
-def attach_nic(vm, *, network, model: str = "VIRTIO", vlan: int | None = None, requested_by) -> tuple[VMNic, "Job"]:
+def attach_nic(vm, *, network, model: str = "VIRTIO", vlan: int | None = None, rate_limit_mbps: int | None = None, requested_by) -> tuple[VMNic, "Job"]:
     from apps.virtual_machines.tasks import attach_nic_task
 
-    nic = VMNic.objects.create(vm=vm, network=network, model=model, vlan=vlan, mac_address=generate_mac_address(), boot_index=vm.nics.count())
+    nic = VMNic.objects.create(
+        vm=vm, network=network, model=model, vlan=vlan, rate_limit_mbps=rate_limit_mbps,
+        mac_address=generate_mac_address(), boot_index=vm.nics.count(),
+    )
     job = _start_storage_job(vm, JobType.NIC_ATTACH, attach_nic_task, requested_by=requested_by, task_args=(nic.pk,))
     return nic, job
 

@@ -58,6 +58,7 @@ class VMNicCreateSerializer(serializers.Serializer):
     vlan = serializers.IntegerField(required=False, allow_null=True)
     mac_address = serializers.CharField(required=False, allow_blank=True)
     bootable = serializers.BooleanField(default=False)
+    rate_limit_mbps = serializers.IntegerField(required=False, allow_null=True, min_value=1)
 
 
 class VirtualMachineCreateSerializer(serializers.Serializer):

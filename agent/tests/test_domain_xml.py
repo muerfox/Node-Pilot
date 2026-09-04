@@ -163,3 +163,47 @@ def test_build_disk_xml_defaults_to_file_type_when_storage_type_omitted():
     assert root.get("type") == "file"
     assert root.find("source").get("file") == "/pools/local/disk.qcow2"
     assert root.find("driver").get("type") == "qcow2"
+
+
+# --- NIC bandwidth (VMNic.rate_limit_mbps was set via the API but never
+# read anywhere in domain XML generation -- a configured rate limit was
+# silently ignored, giving the VM full unthrottled network access) ------
+
+
+def test_build_domain_xml_nic_gets_a_bandwidth_element_when_rate_limited():
+    xml = build_domain_xml(
+        {
+            "name": "vm1", "domain_uuid": "11111111-1111-1111-1111-111111111111", "memory_mb": 1024,
+            "nics": [{"bridge": "vmbr0", "mac_address": "52:54:00:00:00:01", "rate_limit_mbps": 100}],
+        }
+    )
+    root = ET.fromstring(xml)
+    bandwidth = root.find(".//interface/bandwidth")
+    assert bandwidth is not None
+    # 100 Mbps -> 12500 KiB/s
+    assert bandwidth.find("inbound").get("average") == "12500"
+    assert bandwidth.find("outbound").get("average") == "12500"
+
+
+def test_build_domain_xml_nic_has_no_bandwidth_element_when_unset():
+    xml = build_domain_xml(
+        {
+            "name": "vm1", "domain_uuid": "11111111-1111-1111-1111-111111111111", "memory_mb": 1024,
+            "nics": [{"bridge": "vmbr0", "mac_address": "52:54:00:00:00:01"}],
+        }
+    )
+    root = ET.fromstring(xml)
+    assert root.find(".//interface/bandwidth") is None
+
+
+def test_build_nic_xml_applies_the_same_rate_limit():
+    xml_str = build_nic_xml(bridge="vmbr0", mac_address="52:54:00:00:00:01", model="VIRTIO", rate_limit_mbps=50)
+    root = ET.fromstring(xml_str)
+    bandwidth = root.find("bandwidth")
+    assert bandwidth.find("inbound").get("average") == "6250"  # 50 Mbps -> 6250 KiB/s
+
+
+def test_build_nic_xml_omits_bandwidth_when_rate_limit_is_none():
+    xml_str = build_nic_xml(bridge="vmbr0", mac_address="52:54:00:00:00:01", model="VIRTIO")
+    root = ET.fromstring(xml_str)
+    assert root.find("bandwidth") is None

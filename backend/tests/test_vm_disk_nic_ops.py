@@ -103,7 +103,7 @@ def test_resize_disk_grows_and_updates_size(vm, boot_disk, user, monkeypatch):
 
 def test_attach_and_detach_nic(vm, network, user, monkeypatch):
     calls = _fake_agent(monkeypatch)
-    nic, job = services.attach_nic(vm, network=network, requested_by=user)
+    nic, job = services.attach_nic(vm, network=network, rate_limit_mbps=100, requested_by=user)
     tasks.attach_nic_task(job.pk, nic.pk)
 
     job.refresh_from_db()
@@ -125,3 +125,17 @@ def test_attach_and_detach_nic(vm, network, user, monkeypatch):
     detach_payload = next(payload for name, payload in calls if name == "DETACH_NIC")
     assert attach_payload["vlan"] == 120
     assert detach_payload["vlan"] == 120
+    # Regression: VMNic.rate_limit_mbps was fully user-settable but never
+    # read anywhere -- a configured bandwidth limit was silently ignored.
+    assert attach_payload["rate_limit_mbps"] == 100
+    assert detach_payload["rate_limit_mbps"] == 100
+
+
+def test_attach_nic_service_has_no_way_to_set_a_rate_limit_before_this_fix_regression(vm, network, user, monkeypatch):
+    """services.attach_nic didn't even accept rate_limit_mbps as a
+    parameter before this fix -- there was no way to reach it from the
+    API at all, not just a payload-forwarding gap."""
+    _fake_agent(monkeypatch)
+    nic, _ = services.attach_nic(vm, network=network, rate_limit_mbps=250, requested_by=user)
+    nic.refresh_from_db()
+    assert nic.rate_limit_mbps == 250

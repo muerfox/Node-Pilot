@@ -41,7 +41,10 @@ def _nic_target_bridge(payload: dict) -> str:
 def attach_nic(payload: dict, libvirt_client: LibvirtClient) -> dict:
     from nodepilot_agent.domain_xml import build_nic_xml
 
-    xml = build_nic_xml(bridge=_nic_target_bridge(payload), mac_address=payload["mac_address"], model=payload.get("model", "VIRTIO"))
+    xml = build_nic_xml(
+        bridge=_nic_target_bridge(payload), mac_address=payload["mac_address"], model=payload.get("model", "VIRTIO"),
+        rate_limit_mbps=payload.get("rate_limit_mbps"),
+    )
     libvirt_client.attach_device(payload["domain_uuid"], xml)
     return {}
 
@@ -49,6 +52,12 @@ def attach_nic(payload: dict, libvirt_client: LibvirtClient) -> dict:
 def detach_nic(payload: dict, libvirt_client: LibvirtClient) -> dict:
     from nodepilot_agent.domain_xml import build_nic_xml
 
-    xml = build_nic_xml(bridge=_nic_target_bridge(payload), mac_address=payload["mac_address"], model=payload.get("model", "VIRTIO"))
+    # Must build the exact same XML attach_nic did -- libvirt's detach
+    # matches by comparing the device XML, not just identifying fields
+    # like the MAC address.
+    xml = build_nic_xml(
+        bridge=_nic_target_bridge(payload), mac_address=payload["mac_address"], model=payload.get("model", "VIRTIO"),
+        rate_limit_mbps=payload.get("rate_limit_mbps"),
+    )
     libvirt_client.detach_device(payload["domain_uuid"], xml)
     return {}

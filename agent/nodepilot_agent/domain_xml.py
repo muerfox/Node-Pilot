@@ -31,6 +31,16 @@ def _resolve_nic_bridge(nic: dict) -> str:
     return vlan_bridge_name(bridge, vlan_id) if vlan_id else bridge
 
 
+def _bandwidth_xml(rate_limit_mbps) -> str:
+    """libvirt's <bandwidth> average is in KiB/s; VMNic.rate_limit_mbps
+    is stored/configured in Mbps, so convert. Applies the same limit to
+    both directions -- there's no separate up/down field on the model."""
+    if not rate_limit_mbps:
+        return ""
+    average_kbps = int(rate_limit_mbps) * 1000 // 8
+    return f'<bandwidth><inbound average="{average_kbps}"/><outbound average="{average_kbps}"/></bandwidth>'
+
+
 def _disk_source(disk: dict) -> tuple[str, str, str]:
     """Returns (disk_type_attr, source_element_xml, driver_format) for one
     disk payload dict."""
@@ -91,11 +101,13 @@ def build_domain_xml(payload: dict) -> str:
         model = nic.get("model", "VIRTIO").lower()
         bridge = escape(_resolve_nic_bridge(nic))
         mac = escape(nic["mac_address"])
+        bandwidth_xml = _bandwidth_xml(nic.get("rate_limit_mbps"))
         nics_xml.append(
             f'<interface type="bridge">'
             f'<source bridge="{bridge}"/>'
             f'<mac address="{mac}"/>'
             f'<model type="{model}"/>'
+            f"{bandwidth_xml}"
             f"</interface>"
         )
 
@@ -153,11 +165,12 @@ def build_cdrom_xml(*, iso_path: str, device: str = "sda") -> str:
     )
 
 
-def build_nic_xml(*, bridge: str, mac_address: str, model: str) -> str:
+def build_nic_xml(*, bridge: str, mac_address: str, model: str, rate_limit_mbps=None) -> str:
     return (
         f'<interface type="bridge">'
         f'<source bridge="{escape(bridge)}"/>'
         f'<mac address="{escape(mac_address)}"/>'
         f'<model type="{escape(model.lower())}"/>'
+        f"{_bandwidth_xml(rate_limit_mbps)}"
         f"</interface>"
     )

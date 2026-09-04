@@ -40,6 +40,7 @@ def _build_domain_payload(vm: VirtualMachine) -> dict:
             {
                 "uuid": str(n.uuid), "mac_address": n.mac_address, "model": n.model,
                 "bridge": n.network.bridge, "vlan": n.vlan or n.network.vlan_id, "boot_index": n.boot_index,
+                "rate_limit_mbps": n.rate_limit_mbps,
             }
             for n in vm.nics.all()
         ],
@@ -430,7 +431,7 @@ def attach_nic_task(self, job_id: int, nic_id: int) -> None:
             nic.vm.node, OperationType.ATTACH_NIC, resource_id=str(nic.vm.uuid),
             payload={
                 "domain_uuid": str(nic.vm.domain_uuid), "bridge": nic.network.bridge, "vlan": nic.vlan or nic.network.vlan_id,
-                "mac_address": nic.mac_address, "model": nic.model,
+                "mac_address": nic.mac_address, "model": nic.model, "rate_limit_mbps": nic.rate_limit_mbps,
             },
         )
 
@@ -447,7 +448,7 @@ def detach_nic_task(self, job_id: int, nic_id: int) -> None:
             vm.node, OperationType.DETACH_NIC, resource_id=str(vm.uuid),
             payload={
                 "domain_uuid": str(vm.domain_uuid), "bridge": nic.network.bridge, "vlan": nic.vlan or nic.network.vlan_id,
-                "mac_address": nic.mac_address, "model": nic.model,
+                "mac_address": nic.mac_address, "model": nic.model, "rate_limit_mbps": nic.rate_limit_mbps,
             },
         )
         nic.delete()

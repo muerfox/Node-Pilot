@@ -519,3 +519,38 @@ matching the field's own documented default, so existing unscoped
 tokens are unaffected. `backend/tests/test_api_token_scopes.py` --
 confirmed load-bearing by reverting the fix and re-running it (a
 `node.view`-scoped token could create and delete nodes).
+
+## A configured NIC bandwidth limit was silently ignored
+
+Following the same "is this documented field actually consulted
+anywhere" check that found the API token scopes gap: `VMNic
+.rate_limit_mbps` is a real, user-settable field (exposed on
+`VMNicSerializer`) with no reference anywhere in domain XML generation
+or the agent -- a VM's network throughput was always unthrottled
+regardless of what limit was configured. Worse than the token-scopes
+case, there wasn't even a *path* to set it in the first place:
+`VMNicCreateSerializer` (used by both VM creation and the standalone
+attach-NIC action) didn't accept the field at all, and
+`services.attach_nic`'s signature didn't have a parameter for it --
+confirmed by reverting the fix and watching `attach_nic()` raise
+`TypeError: unexpected keyword argument 'rate_limit_mbps'`, not just a
+silently-dropped value.
+
+Closed on both ends of the same path already used for `vlan`
+(`_build_domain_payload`'s nic dict, and both `ATTACH_NIC`/`DETACH_NIC`
+payloads -- detach must match attach's XML exactly for libvirt to find
+the device to remove, so the rate limit has to be included there too,
+even though detaching doesn't use it for anything else) plus the input
+side (`VMNicCreateSerializer`, `create_vm`'s nic-creation loop,
+`services.attach_nic`, and the view's manual field extraction for the
+attach-NIC action). `domain_xml._bandwidth_xml` converts Mbps to
+libvirt's `<bandwidth>` `average` (KiB/s) and adds it to the interface
+element in both `build_domain_xml` (initial `CREATE_VM`) and
+`build_nic_xml` (hot-attach/detach) -- no new agent operation needed,
+this is a standard libvirt/QEMU feature. Like `vlan`, this stays an
+API-only field with no dedicated frontend input, matching that existing
+precedent rather than introducing new UI scope.
+`backend/tests/test_vm_service.py`, `backend/tests/
+test_vm_disk_nic_ops.py`, `agent/tests/test_domain_xml.py`,
+`agent/tests/test_network_ops.py` -- confirmed load-bearing by
+reverting the fix and re-running the tests.

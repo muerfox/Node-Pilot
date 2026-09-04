@@ -64,6 +64,24 @@ def test_create_vm_sets_up_disks_and_nics(organization, project, user, node, sto
     assert nic.mac_address.startswith("52:54:00")
 
 
+def test_create_vm_persists_and_forwards_a_nic_rate_limit(organization, project, user, node, storage, network, monkeypatch):
+    """VMNic.rate_limit_mbps used to have no path to actually get set at
+    all (create_vm's nic-creation loop dropped it even if a caller
+    passed it), and CREATE_VM's domain payload never included it either."""
+    vm, job = _create(organization, project, user, node, storage, network, nics=[{"network": network, "rate_limit_mbps": 100}])
+
+    nic = vm.nics.get()
+    assert nic.rate_limit_mbps == 100
+
+    calls = []
+    monkeypatch.setattr(tasks.agent_client, "send_operation", lambda target_node, operation, resource_id, payload=None, timeout=None: calls.append((operation.value, payload)) or ({"volume_id": "vol-1", "device": "vda"} if operation.value == "CREATE_DISK" else {}))
+
+    tasks.provision_vm(job.pk, vm.pk)
+
+    create_vm_payload = next(payload for name, payload in calls if name == "CREATE_VM")
+    assert create_vm_payload["nics"][0]["rate_limit_mbps"] == 100
+
+
 def test_provision_vm_happy_path(organization, project, user, node, storage, network, monkeypatch):
     vm, job = _create(organization, project, user, node, storage, network)
 

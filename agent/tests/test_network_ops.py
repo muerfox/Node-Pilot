@@ -106,3 +106,25 @@ def test_detach_nic_targets_the_same_dedicated_bridge_attach_used():
     attach_xml = libvirt_client.attach_device.call_args.args[1]
     detach_xml = libvirt_client.detach_device.call_args.args[1]
     assert attach_xml == detach_xml
+
+
+def test_attach_nic_applies_a_configured_rate_limit():
+    libvirt_client = MagicMock()
+    network_ops.attach_nic({"domain_uuid": "vm-1", "bridge": "vmbr0", "mac_address": "52:54:00:00:00:01", "rate_limit_mbps": 100}, libvirt_client)
+
+    xml = libvirt_client.attach_device.call_args.args[1]
+    assert "<bandwidth>" in xml
+    assert 'average="12500"' in xml  # 100 Mbps -> 12500 KiB/s
+
+
+def test_detach_nic_with_a_rate_limit_still_matches_the_attach_xml():
+    libvirt_client = MagicMock()
+    payload = {"domain_uuid": "vm-1", "bridge": "vmbr0", "vlan": 120, "mac_address": "52:54:00:00:00:01", "rate_limit_mbps": 100}
+
+    network_ops.attach_nic(payload, libvirt_client)
+    network_ops.detach_nic(payload, libvirt_client)
+
+    attach_xml = libvirt_client.attach_device.call_args.args[1]
+    detach_xml = libvirt_client.detach_device.call_args.args[1]
+    assert attach_xml == detach_xml
+    assert "<bandwidth>" in attach_xml
