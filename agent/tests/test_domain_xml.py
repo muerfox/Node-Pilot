@@ -207,3 +207,63 @@ def test_build_nic_xml_omits_bandwidth_when_rate_limit_is_none():
     xml_str = build_nic_xml(bridge="vmbr0", mac_address="52:54:00:00:00:01", model="VIRTIO")
     root = ET.fromstring(xml_str)
     assert root.find("bandwidth") is None
+
+
+# --- iothread and memballoon (VMDisk.iothread / VirtualMachine
+# .ballooning_enabled were both user-settable but never read anywhere in
+# domain XML generation) ---------------------------------------------
+
+
+def test_a_disk_with_iothread_gets_a_dedicated_iothread_pool_and_driver_attr():
+    payload = {
+        "domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024,
+        "disks": [{"volume_id": "/pool/disk1.qcow2", "bus": "VIRTIO", "device": "vda", "iothread": True}],
+        "nics": [],
+    }
+    root = ET.fromstring(build_domain_xml(payload))
+    assert root.findtext("iothreads") == "1"
+    driver = root.find(".//disk/driver")
+    assert driver.get("iothread") == "1"
+
+
+def test_a_disk_without_iothread_has_no_pool_declared_or_driver_attr():
+    payload = {
+        "domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024,
+        "disks": [{"volume_id": "/pool/disk1.qcow2", "bus": "VIRTIO", "device": "vda"}],
+        "nics": [],
+    }
+    root = ET.fromstring(build_domain_xml(payload))
+    assert root.find("iothreads") is None
+    driver = root.find(".//disk/driver")
+    assert driver.get("iothread") is None
+
+
+def test_the_iothread_pool_is_declared_once_even_with_multiple_iothread_disks():
+    payload = {
+        "domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024,
+        "disks": [
+            {"volume_id": "/pool/disk1.qcow2", "bus": "VIRTIO", "device": "vda", "iothread": True},
+            {"volume_id": "/pool/disk2.qcow2", "bus": "VIRTIO", "device": "vdb", "iothread": True},
+        ],
+        "nics": [],
+    }
+    root = ET.fromstring(build_domain_xml(payload))
+    assert len(root.findall("iothreads")) == 1
+
+
+def test_ballooning_enabled_gets_a_virtio_memballoon():
+    payload = {"domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024, "disks": [], "nics": [], "ballooning_enabled": True}
+    root = ET.fromstring(build_domain_xml(payload))
+    assert root.find(".//memballoon").get("model") == "virtio"
+
+
+def test_ballooning_disabled_gets_an_explicit_none_memballoon():
+    payload = {"domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024, "disks": [], "nics": [], "ballooning_enabled": False}
+    root = ET.fromstring(build_domain_xml(payload))
+    assert root.find(".//memballoon").get("model") == "none"
+
+
+def test_ballooning_defaults_to_enabled_when_omitted():
+    payload = {"domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024, "disks": [], "nics": []}
+    root = ET.fromstring(build_domain_xml(payload))
+    assert root.find(".//memballoon").get("model") == "virtio"

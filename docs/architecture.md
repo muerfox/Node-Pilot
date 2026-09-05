@@ -554,3 +554,46 @@ precedent rather than introducing new UI scope.
 test_vm_disk_nic_ops.py`, `agent/tests/test_domain_xml.py`,
 `agent/tests/test_network_ops.py` -- confirmed load-bearing by
 reverting the fix and re-running the tests.
+
+## VMDisk.iothread and VirtualMachine.ballooning_enabled were also unreachable and unread
+
+Extending the same field-by-field check past `help_text`-bearing fields
+to other self-evidently-named ones turned up two more instances of the
+identical gap: `VMDisk.iothread` (a dedicated virtio I/O thread instead
+of sharing the emulator thread -- lower latency under concurrent disk
+I/O) and `VirtualMachine.ballooning_enabled` were both real model fields
+with zero references anywhere in domain XML generation, and -- like
+`rate_limit_mbps` -- no way to set them via the API at VM-creation time
+either: `create_vm`'s own signature had no `ballooning_enabled`
+parameter at all (confirmed by reverting and watching `create_vm()`
+raise a `TypeError`, the same shape of proof as the NIC bandwidth fix),
+and `VMDiskCreateSerializer` didn't accept `iothread` (nor, while in
+there, `readonly`/`discard`, which -- unlike the other two -- were at
+least already read correctly by domain XML generation, just not
+settable through the creation wizard).
+
+Fixed:
+
+- `domain_xml.build_domain_xml` now emits `<iothreads>1</iothreads>`
+  (a single shared pool; libvirt requires it declared before any disk
+  can reference it) whenever any disk requests one, and
+  `iothread="1"` on that disk's `<driver>` element.
+- `<memballoon>` is now always explicit -- `model="virtio"` when
+  `ballooning_enabled` (the default), `model="none"` when disabled --
+  rather than relying on libvirt's own default (which auto-adds a
+  virtio memballoon regardless), so toggling the field actually changes
+  the generated XML in both directions.
+- `VMDiskCreateSerializer` gained `readonly`/`discard`/`iothread`;
+  `create_vm`'s disk-creation loop now persists all three instead of
+  silently falling back to the model defaults regardless of what a
+  caller requested; `create_vm` gained a `ballooning_enabled` parameter,
+  threaded through from `VirtualMachineCreateSerializer` (also
+  previously missing the field) via the view.
+- Scoped to `CREATE_VM` time only, same as the NIC fields -- hot-adding
+  an iothread-backed disk after creation would need to first grow the
+  live domain's iothread pool (`virsh iothreadadd`-equivalent), which
+  `attach_disk`/`ATTACH_DISK` don't do; left as a known, narrower gap
+  rather than half-building it.
+
+`backend/tests/test_vm_service.py`, `agent/tests/test_domain_xml.py` --
+confirmed load-bearing by reverting the fix and re-running the tests.

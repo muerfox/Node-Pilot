@@ -76,6 +76,7 @@ class VirtualMachineViewSet(OrganizationScopedModelViewSet):
             {
                 "storage": d["storage"], "name": d.get("name", ""), "size_bytes": d["size_gb"] * 1024**3,
                 "bus": d["bus"], "bootable": d["bootable"], "format": d["format"],
+                "readonly": d["readonly"], "discard": d["discard"], "iothread": d["iothread"],
             }
             for d in data.get("disks", [])
         ]
@@ -91,6 +92,7 @@ class VirtualMachineViewSet(OrganizationScopedModelViewSet):
             organization=project.organization, project=project, name=data["name"], created_by=request.user,
             node=data.get("node"), template=data.get("template"), cpu_count=data["cpu_count"], memory_mb=data["memory_mb"],
             disks=disks, nics=nics, os_type=data["os_type"], firmware=data["firmware"],
+            ballooning_enabled=data["ballooning_enabled"],
             cloud_init_enabled=data["cloud_init_enabled"], cloud_init_config=data.get("cloud_init_config"),
             autostart=data["autostart"], idempotency_key=request.META.get("HTTP_IDEMPOTENCY_KEY", ""),
         )

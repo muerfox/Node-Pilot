@@ -81,15 +81,21 @@ def build_domain_xml(payload: dict) -> str:
     firmware = payload.get("firmware", "BIOS")
 
     disks_xml = []
+    # A single shared iothread pool is enough to give any disk with
+    # iothread=True a dedicated I/O thread (off the main emulator
+    # thread) -- libvirt requires <iothreads>N</iothreads> to declare
+    # the pool before any <driver iothread="..."/> can reference it.
+    any_iothread = any(d.get("iothread") for d in payload.get("disks", []))
     for index, disk in enumerate(payload.get("disks", [])):
         bus = disk.get("bus", "VIRTIO")
         device_name = disk.get("device") or _next_device_name(_BUS_DEVICE_PREFIX.get(bus, "vd"), index)
         discard_attr = ' discard="unmap"' if disk.get("discard") else ""
+        iothread_attr = ' iothread="1"' if disk.get("iothread") else ""
         readonly_tag = "<readonly/>" if disk.get("readonly") else ""
         disk_type_attr, source_xml, driver_format = _disk_source(disk)
         disks_xml.append(
             f'<disk type="{disk_type_attr}" device="disk">'
-            f'<driver name="qemu" type="{driver_format}"{discard_attr}/>'
+            f'<driver name="qemu" type="{driver_format}"{discard_attr}{iothread_attr}/>'
             f"{source_xml}"
             f'<target dev="{device_name}" bus="{_BUS_XML_NAME.get(bus, "virtio")}"/>'
             f"{readonly_tag}"
@@ -120,6 +126,13 @@ def build_domain_xml(payload: dict) -> str:
         )
     )
 
+    iothreads_xml = "<iothreads>1</iothreads>" if any_iothread else ""
+    # Explicit either way rather than relying on libvirt's own default
+    # (which auto-adds a virtio memballoon unless told not to) -- so
+    # toggling VirtualMachine.ballooning_enabled actually changes the
+    # generated XML in both directions, not just when disabling it.
+    memballoon_xml = '<memballoon model="virtio"/>' if payload.get("ballooning_enabled", True) else '<memballoon model="none"/>'
+
     return (
         f'<domain type="kvm">'
         f"<name>{name}</name>"
@@ -127,6 +140,7 @@ def build_domain_xml(payload: dict) -> str:
         f"<memory unit=\"MiB\">{memory_mb}</memory>"
         f"<currentMemory unit=\"MiB\">{memory_mb}</currentMemory>"
         f'<vcpu placement="static">{vcpu}</vcpu>'
+        f"{iothreads_xml}"
         f"{os_xml}"
         f'<cpu mode="host-passthrough"/>'
         f"<on_poweroff>destroy</on_poweroff>"
@@ -138,6 +152,7 @@ def build_domain_xml(payload: dict) -> str:
         f"{''.join(nics_xml)}"
         f'<console type="pty"><target type="serial" port="0"/></console>'
         f'<graphics type="vnc" port="-1" autoport="yes" listen="127.0.0.1"/>'
+        f"{memballoon_xml}"
         f"</devices>"
         f"</domain>"
     )

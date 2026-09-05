@@ -64,6 +64,31 @@ def test_create_vm_sets_up_disks_and_nics(organization, project, user, node, sto
     assert nic.mac_address.startswith("52:54:00")
 
 
+def test_create_vm_persists_and_forwards_disk_iothread_and_vm_ballooning(organization, project, user, node, storage, network, monkeypatch):
+    """VMDisk.iothread and VirtualMachine.ballooning_enabled were both
+    user-settable but create_vm's disk-creation loop silently dropped
+    iothread (defaulting it to False regardless of what was requested),
+    and domain XML generation never read either field at all."""
+    vm, job = _create(
+        organization, project, user, node, storage, network,
+        disks=[{"storage": storage, "name": "root", "size_bytes": 10 * 1024**3, "bootable": True, "iothread": True}],
+        ballooning_enabled=False,
+    )
+
+    disk = vm.disks.get()
+    assert disk.iothread is True
+    assert vm.ballooning_enabled is False
+
+    calls = []
+    monkeypatch.setattr(tasks.agent_client, "send_operation", lambda target_node, operation, resource_id, payload=None, timeout=None: calls.append((operation.value, payload)) or ({"volume_id": "vol-1", "device": "vda"} if operation.value == "CREATE_DISK" else {}))
+
+    tasks.provision_vm(job.pk, vm.pk)
+
+    create_vm_payload = next(payload for name, payload in calls if name == "CREATE_VM")
+    assert create_vm_payload["disks"][0]["iothread"] is True
+    assert create_vm_payload["ballooning_enabled"] is False
+
+
 def test_create_vm_persists_and_forwards_a_nic_rate_limit(organization, project, user, node, storage, network, monkeypatch):
     """VMNic.rate_limit_mbps used to have no path to actually get set at
     all (create_vm's nic-creation loop dropped it even if a caller

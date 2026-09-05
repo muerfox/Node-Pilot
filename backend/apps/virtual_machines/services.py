@@ -51,6 +51,7 @@ def create_vm(
     nics: list[dict] | None = None,
     os_type: str = "linux",
     firmware: str = "BIOS",
+    ballooning_enabled: bool = True,
     cloud_init_enabled: bool = False,
     cloud_init_config: dict | None = None,
     autostart: bool = False,
@@ -97,6 +98,7 @@ def create_vm(
         cpu_cores=cpu_count,
         cpu_threads=1,
         memory_mb=memory_mb,
+        ballooning_enabled=ballooning_enabled,
         cloud_init_enabled=cloud_init_enabled,
         cloud_init_config=cloud_init_config or {},
         autostart=autostart,
@@ -115,6 +117,9 @@ def create_vm(
             size_bytes=disk_spec["size_bytes"],
             format=disk_spec.get("format", "qcow2"),
             bootable=disk_spec.get("bootable", index == 0),
+            readonly=disk_spec.get("readonly", False),
+            discard=disk_spec.get("discard", True),
+            iothread=disk_spec.get("iothread", False),
             boot_index=index,
         )
 

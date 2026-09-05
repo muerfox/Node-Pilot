@@ -50,6 +50,9 @@ class VMDiskCreateSerializer(serializers.Serializer):
     bus = serializers.ChoiceField(choices=["VIRTIO", "VIRTIO_SCSI", "SATA", "IDE"], default="VIRTIO")
     bootable = serializers.BooleanField(default=False)
     format = serializers.ChoiceField(choices=["qcow2", "raw"], default="qcow2")
+    readonly = serializers.BooleanField(default=False)
+    discard = serializers.BooleanField(default=True)
+    iothread = serializers.BooleanField(default=False, help_text="Give this disk a dedicated virtio iothread instead of sharing the emulator thread -- lower latency under concurrent I/O.")
 
 
 class VMNicCreateSerializer(serializers.Serializer):
@@ -73,6 +76,7 @@ class VirtualMachineCreateSerializer(serializers.Serializer):
     memory_mb = serializers.IntegerField(min_value=128, default=2048)
     disks = VMDiskCreateSerializer(many=True, required=False)
     nics = VMNicCreateSerializer(many=True, required=False)
+    ballooning_enabled = serializers.BooleanField(default=True)
     cloud_init_enabled = serializers.BooleanField(default=False)
     cloud_init_config = serializers.DictField(required=False, default=dict)
     autostart = serializers.BooleanField(default=True)
