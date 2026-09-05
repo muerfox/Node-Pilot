@@ -76,6 +76,7 @@ class VirtualMachineCreateSerializer(serializers.Serializer):
     memory_mb = serializers.IntegerField(min_value=128, default=2048)
     disks = VMDiskCreateSerializer(many=True, required=False)
     nics = VMNicCreateSerializer(many=True, required=False)
+    boot_order = serializers.ListField(child=serializers.ChoiceField(choices=["disk", "cdrom", "network"]), required=False, default=list)
     ballooning_enabled = serializers.BooleanField(default=True)
     cloud_init_enabled = serializers.BooleanField(default=False)
     cloud_init_config = serializers.DictField(required=False, default=dict)

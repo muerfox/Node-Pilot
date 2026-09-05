@@ -7,6 +7,11 @@ from xml.sax.saxutils import escape as _sax_escape
 
 _BUS_DEVICE_PREFIX = {"VIRTIO": "vd", "VIRTIO_SCSI": "sd", "SATA": "sd", "IDE": "hd"}
 _BUS_XML_NAME = {"VIRTIO": "virtio", "VIRTIO_SCSI": "scsi", "SATA": "sata", "IDE": "ide"}
+# VirtualMachine.boot_order entries (section 10: e.g. ["disk", "cdrom",
+# "network"]) map to libvirt's <boot dev="..."/> enum, which is neither
+# "disk" nor the storage-side "DIRECTORY"/"LVM" vocabulary used elsewhere
+# in this file.
+_BOOT_DEV_XML_NAME = {"disk": "hd", "cdrom": "cdrom", "network": "network", "floppy": "fd"}
 
 # LVM/LVM-thin/ZFS (and, if it's ever wired up, Ceph RBD) volumes are raw
 # block devices at a /dev/... path, not regular files -- libvirt needs
@@ -117,12 +122,14 @@ def build_domain_xml(payload: dict) -> str:
             f"</interface>"
         )
 
+    boot_devices = [_BOOT_DEV_XML_NAME.get(d, "hd") for d in (payload.get("boot_order") or ["disk"])]
+    boot_xml = "".join(f'<boot dev="{d}"/>' for d in boot_devices)
     os_xml = (
-        '<os><type arch="x86_64" machine="%s">hvm</type><boot dev="hd"/></os>' % escape(machine_type)
+        f'<os><type arch="x86_64" machine="{escape(machine_type)}">hvm</type>{boot_xml}</os>'
         if firmware == "BIOS"
         else (
             f'<os firmware="efi"><type arch="x86_64" machine="{escape(machine_type)}">hvm</type>'
-            f'<boot dev="hd"/></os>'
+            f'{boot_xml}</os>'
         )
     )
 

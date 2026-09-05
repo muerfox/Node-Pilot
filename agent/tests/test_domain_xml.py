@@ -267,3 +267,43 @@ def test_ballooning_defaults_to_enabled_when_omitted():
     payload = {"domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024, "disks": [], "nics": []}
     root = ET.fromstring(build_domain_xml(payload))
     assert root.find(".//memballoon").get("model") == "virtio"
+
+
+# --- boot_order (VirtualMachine.boot_order was forwarded in the payload
+# and even user-editable via PATCH, but build_domain_xml always hardcoded
+# a single <boot dev="hd"/>, ignoring it completely) --------------------
+
+
+def test_boot_order_produces_boot_elements_in_the_requested_sequence():
+    payload = {
+        "domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024,
+        "disks": [], "nics": [], "boot_order": ["cdrom", "disk", "network"],
+    }
+    root = ET.fromstring(build_domain_xml(payload))
+    boots = root.findall(".//os/boot")
+    assert [b.get("dev") for b in boots] == ["cdrom", "hd", "network"]
+
+
+def test_boot_order_defaults_to_disk_when_omitted():
+    payload = {"domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024, "disks": [], "nics": []}
+    root = ET.fromstring(build_domain_xml(payload))
+    boots = root.findall(".//os/boot")
+    assert [b.get("dev") for b in boots] == ["hd"]
+
+
+def test_boot_order_defaults_to_disk_when_the_list_is_empty():
+    """VirtualMachine.boot_order defaults to [] at the model level."""
+    payload = {"domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024, "disks": [], "nics": [], "boot_order": []}
+    root = ET.fromstring(build_domain_xml(payload))
+    boots = root.findall(".//os/boot")
+    assert [b.get("dev") for b in boots] == ["hd"]
+
+
+def test_boot_order_is_respected_for_uefi_firmware_too():
+    payload = {
+        "domain_uuid": "11111111-1111-1111-1111-111111111111", "name": "vm", "memory_mb": 1024, "firmware": "UEFI",
+        "disks": [], "nics": [], "boot_order": ["cdrom", "disk"],
+    }
+    root = ET.fromstring(build_domain_xml(payload))
+    boots = root.findall(".//os/boot")
+    assert [b.get("dev") for b in boots] == ["cdrom", "hd"]

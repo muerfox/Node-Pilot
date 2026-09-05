@@ -132,6 +132,12 @@ the real API, with live job/status updates over WebSockets; see
   against the object, and `endpoint_url` is how MinIO/Ceph RGW targets
   are distinguished from real AWS S3. Any other target type still raises
   a clear `NotImplementedError` rather than a fake success.
+- **Redefining an already-created VM's domain**: `boot_order` (and
+  `autostart`/`name`/`hostname`/`description`) can be `PATCH`ed on an
+  existing VM, but there's no `UPDATE_VM` operation in the Agent
+  Protocol to push that change to the already-defined libvirt domain --
+  only a VM's state *at creation* ever reaches the agent. See "`Virtual
+  Machine.boot_order` was forwarded and PATCHable..." below.
 
 Nothing in the implemented paths pretends to succeed when it didn't --
 provisioning failures roll back and clean up partially created resources
@@ -594,6 +600,40 @@ Fixed:
   live domain's iothread pool (`virsh iothreadadd`-equivalent), which
   `attach_disk`/`ATTACH_DISK` don't do; left as a known, narrower gap
   rather than half-building it.
+
+`backend/tests/test_vm_service.py`, `agent/tests/test_domain_xml.py` --
+confirmed load-bearing by reverting the fix and re-running the tests.
+
+## VirtualMachine.boot_order was forwarded and PATCHable, but not settable at creation, and libvirt never saw it
+
+A third instance of the same check, this one with an extra wrinkle:
+`boot_order` (e.g. `["cdrom", "disk"]`) was already included in
+`_build_domain_payload` and already writable via `VirtualMachineSerializer`
+(a plain `PATCH /vms/{uuid}/`) -- but `VirtualMachineCreateSerializer`
+never accepted it, so every VM was created with `boot_order=[]`
+regardless of intent, and `build_domain_xml` hardcoded a single
+`<boot dev="hd"/>` unconditionally, ignoring whatever was in the payload
+either way. Fixed on both ends: `build_domain_xml` now emits one
+`<boot dev="..."/>` per entry, in order (`disk`->`hd`, `cdrom`->`cdrom`,
+`network`->`network`), defaulting to `["disk"]` when empty; `boot_order`
+was added to `VirtualMachineCreateSerializer` and threaded through
+`create_vm` the same way `ballooning_enabled` was.
+
+Tracing this surfaced a real, separate limitation worth being honest
+about rather than silently leaving implied: `VirtualMachineViewSet` has
+no custom `update`/`partial_update`, so a `PATCH` changing `boot_order`
+(or `autostart`, `name`, `hostname`, `description` -- the serializer's
+only non-read-only fields) only ever updates the database row. There is
+no `UPDATE_VM`/redefine-domain operation in the Agent Protocol, so
+**an already-defined VM's actual boot order never changes just because
+its database row was PATCHed** -- only a VM's *initial* `boot_order`,
+set at creation, ever reaches libvirt. Building a real redefine-domain
+capability (a new protocol operation, deciding whether it applies to a
+running VM immediately or only takes effect on next boot, handling
+libvirt's live-vs-persistent-config distinction) is a real feature in
+its own right, not a one-line fix to a dropped field, so it's flagged
+here rather than attempted -- the same "document, don't fake" treatment
+already given to Live Migration.
 
 `backend/tests/test_vm_service.py`, `agent/tests/test_domain_xml.py` --
 confirmed load-bearing by reverting the fix and re-running the tests.

@@ -64,6 +64,26 @@ def test_create_vm_sets_up_disks_and_nics(organization, project, user, node, sto
     assert nic.mac_address.startswith("52:54:00")
 
 
+def test_create_vm_persists_and_forwards_boot_order(organization, project, user, node, storage, network, monkeypatch):
+    """boot_order was forwarded in the CREATE_VM payload and even
+    PATCHable on an existing VM via VirtualMachineSerializer, but
+    VirtualMachineCreateSerializer/create_vm had no way to set it at
+    creation time at all -- it was always [] regardless of what a
+    caller intended -- and the agent's domain XML always hardcoded a
+    single <boot dev="hd"/>, ignoring the field completely regardless."""
+    vm, job = _create(organization, project, user, node, storage, network, boot_order=["cdrom", "disk"])
+
+    assert vm.boot_order == ["cdrom", "disk"]
+
+    calls = []
+    monkeypatch.setattr(tasks.agent_client, "send_operation", lambda target_node, operation, resource_id, payload=None, timeout=None: calls.append((operation.value, payload)) or ({"volume_id": "vol-1", "device": "vda"} if operation.value == "CREATE_DISK" else {}))
+
+    tasks.provision_vm(job.pk, vm.pk)
+
+    create_vm_payload = next(payload for name, payload in calls if name == "CREATE_VM")
+    assert create_vm_payload["boot_order"] == ["cdrom", "disk"]
+
+
 def test_create_vm_persists_and_forwards_disk_iothread_and_vm_ballooning(organization, project, user, node, storage, network, monkeypatch):
     """VMDisk.iothread and VirtualMachine.ballooning_enabled were both
     user-settable but create_vm's disk-creation loop silently dropped
