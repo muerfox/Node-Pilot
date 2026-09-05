@@ -637,3 +637,47 @@ already given to Live Migration.
 
 `backend/tests/test_vm_service.py`, `agent/tests/test_domain_xml.py` --
 confirmed load-bearing by reverting the fix and re-running the tests.
+
+## Webhooks subscribed to a specific event never received it, and every VM event was delivered twice
+
+Cross-checking `apps.webhooks.models.SUPPORTED_EVENTS` (and every
+`Webhook.events` subscription, validated by `WebhookSerializer
+.validate_events`) against what `emit_event` actually dispatched turned
+up two compounding bugs. `Event.type` is `UPPER_SNAKE_CASE`
+(`"NODE_OFFLINE"`, `"VM_CREATED"`), but `SUPPORTED_EVENTS` and every
+subscription use dotted `"resource.action"` form (`"node.offline"`).
+`emit_event`'s internal `dispatch_event(...)` call converted the type
+with a plain `.lower()` -- `"node_offline"` -- which never matches a
+webhook actually subscribed to `"node.offline"`, the only value the API
+lets it subscribe to. Only a wildcard (`events=["*"]`) subscription
+happened to work, since `"*" in self.events` doesn't care about the
+type string's format at all: **any webhook scoped to a specific
+non-VM event (node, backup, network, snapshot) never received it.**
+
+Separately, `apps.virtual_machines.tasks._emit_vm_event` had grown its
+own second, ad-hoc `dispatch_event(...)` call -- ahead of, and in
+addition to, calling `emit_event()` (which itself also dispatches, per
+the bug above). A VM event landed at a wildcard-subscribed webhook
+*twice*: once correctly formatted (`"vm.created"`, via the direct call)
+and once incorrectly formatted (`"vm_created"`, via `emit_event`'s own
+dispatch) -- two `WebhookDelivery` rows, two HTTP deliveries, for one
+event. This is exactly the kind of point fix that should have been made
+once, generally, at the `emit_event` level, rather than patched locally
+for VMs only.
+
+Fixed by adding a single `_webhook_event_type()` helper in
+`apps/events/services.py` (lowercase, then convert only the *first*
+underscore to a dot -- `"VM_SNAPSHOT_CREATED"` -> `"vm.snapshot_created"`,
+matching every emitted type's `RESOURCE_ACTION[_MORE]` shape) and using
+it in `emit_event`'s dispatch call; and by deleting `_emit_vm_event`'s
+separate dispatch entirely, folding the `name` field it used to add
+into the metadata passed to the single remaining `emit_event()` call so
+no payload data was lost.
+
+`backend/tests/test_webhook_event_dispatch.py` -- verifies the
+conversion function directly, that a webhook scoped to `"node.offline"`
+actually receives a `NODE_OFFLINE` event and one scoped to a different
+event does not, and (the double-dispatch regression) that a wildcard
+webhook receives exactly one delivery for one VM event, not two.
+Confirmed load-bearing: reverting both source files makes the test
+module fail to even collect (`_webhook_event_type` no longer exists).

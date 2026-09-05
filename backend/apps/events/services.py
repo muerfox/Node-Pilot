@@ -7,6 +7,21 @@ from apps.events.models import Event
 logger = logging.getLogger("nodepilot.events")
 
 
+def _webhook_event_type(raw_type: str) -> str:
+    """Event.type is UPPER_SNAKE_CASE (e.g. "NODE_OFFLINE", "VM_CREATED",
+    "BACKUP_COMPLETED"), but apps.webhooks.models.SUPPORTED_EVENTS and
+    every Webhook's own `events` subscription list use dotted
+    "resource.action" form (e.g. "node.offline") -- section 37. A plain
+    `.lower()` (what this used to do) produces "node_offline", which
+    never matches a webhook actually subscribed to "node.offline": only
+    a wildcard ("*") subscription would ever see it. Lowercase and turn
+    the first underscore into a dot, matching every emitted type's
+    RESOURCE_ACTION[_MORE] shape."""
+    lowered = raw_type.lower()
+    resource, sep, rest = lowered.partition("_")
+    return f"{resource}.{rest}" if sep else lowered
+
+
 def emit_event(*, type: str, severity: str, resource_type: str, resource_id: str, organization, actor=None, metadata: dict | None = None) -> Event:
     event = Event.objects.create(
         type=type, severity=severity, resource_type=resource_type, resource_id=resource_id,
@@ -18,7 +33,7 @@ def emit_event(*, type: str, severity: str, resource_type: str, resource_id: str
     try:
         from apps.webhooks.services import dispatch_event
 
-        dispatch_event(organization, type.lower(), {"resource_type": resource_type, "resource_id": resource_id, **(metadata or {})})
+        dispatch_event(organization, _webhook_event_type(type), {"resource_type": resource_type, "resource_id": resource_id, **(metadata or {})})
     except Exception:  # pragma: no cover
         logger.exception("Failed to dispatch webhooks for event %s", type)
 

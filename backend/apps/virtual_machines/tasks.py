@@ -51,19 +51,19 @@ def _emit_vm_event(vm: VirtualMachine, event_type: str, **metadata) -> None:
     try:
         from apps.events.services import emit_event
 
+        # emit_event's own webhook dispatch (apps.events.services
+        # ._webhook_event_type) already converts e.g. "VM_CREATED" into
+        # the "vm.created" form webhook subscriptions use -- a separate
+        # dispatch_event call used to happen here too, with its own
+        # ad-hoc (and, for anything but VM_* types, wrong) conversion,
+        # so a wildcard-subscribed webhook got every VM event delivered
+        # twice, once correctly formatted and once not.
         emit_event(
             type=event_type, severity="INFO", resource_type="VirtualMachine",
-            resource_id=str(vm.uuid), organization=vm.organization, metadata=metadata,
+            resource_id=str(vm.uuid), organization=vm.organization, metadata={"name": vm.name, **metadata},
         )
     except Exception:  # pragma: no cover
         logger.exception("Failed to emit %s for VM %s", event_type, vm.uuid)
-
-    try:
-        from apps.webhooks.services import dispatch_event
-
-        dispatch_event(vm.organization, event_type.lower().replace("vm_", "vm."), {"vm_uuid": str(vm.uuid), "name": vm.name, **metadata})
-    except Exception:  # pragma: no cover
-        logger.exception("Failed to dispatch webhook for %s on VM %s", event_type, vm.uuid)
 
     try:
         from apps.virtual_machines.consumers import broadcast_vm_status
