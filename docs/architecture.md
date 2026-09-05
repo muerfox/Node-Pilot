@@ -681,3 +681,59 @@ event does not, and (the double-dispatch regression) that a wildcard
 webhook receives exactly one delivery for one VM event, not two.
 Confirmed load-bearing: reverting both source files makes the test
 module fail to even collect (`_webhook_event_type` no longer exists).
+
+## Registering a storage pool never actually created or measured anything on the host
+
+`StoragePoolViewSet` was a plain `ModelViewSet` with no `perform_create`
+override -- creating a pool through `POST /storages/` only ever inserted
+a database row. `capacity_bytes`, `used_bytes`, `available_bytes` and
+`status` are all marked `read_only_fields` in `StoragePoolSerializer`,
+implying the system reports them, and the agent already has a fully
+working `GET_STORAGE_POOL_INFO` operation
+(`nodepilot_agent.operations.storage_ops.get_storage_pool_info`, backed
+by a real per-storage-type backend) to do exactly that -- but nothing on
+the controller ever called it, so every pool sat at
+`capacity_bytes=0`/`used_bytes=0`/`available_bytes=0` forever, and a
+`DIRECTORY` pool's `path` was never actually created on the node either
+(`CREATE_STORAGE_POOL`, which `mkdir`s it, was likewise never sent).
+
+Fixed with the same create-a-row-then-dispatch-a-job shape already used
+for Network provisioning: `apps/storage/services.create_storage_pool`
+creates the `StoragePool` row `OFFLINE`, then
+`apps/storage/tasks.create_storage_pool_task` sends `CREATE_STORAGE_POOL`
+(DIRECTORY pools only -- the agent's own `create_storage_pool` deliberately
+refuses to provision LVM/LVM-thin/ZFS/NFS/Ceph-RBD, since that requires
+host-specific decisions like disk selection and RAID layout that don't
+belong in an automated action; NodePilot only *registers* an
+already-existing pool of those types) and then always
+`GET_STORAGE_POOL_INFO`, populating real capacity/usage and flipping the
+row to `ONLINE`, or `ERROR` if either call fails. A new
+`storage.refresh_storage_pools` Celery Beat task (5-minute interval, same
+cadence class as `nodes.reconcile_nodes`) re-runs the info fetch for every
+enabled pool on an online node, so capacity/usage don't go stale and an
+unreachable pool is reflected as `ERROR` rather than silently frozen at
+its last-known numbers.
+
+Deleting a pool was deliberately left untouched: the agent's
+`delete_storage_pool` unconditionally raises
+`NotImplementedError("Deleting a storage pool is an intentionally
+manual, host-level operation.")` regardless of type, so `DELETE_STORAGE_POOL`
+being declared in the protocol but never called from the controller is
+the correct, intentional state, not a bug -- calling it would just turn
+every deletion into a guaranteed failure. `StoragePool.type=CEPH_RBD` is
+also a known, pre-existing gap one level down from this fix: the agent's
+storage-backend registry (`nodepilot_agent/storage/__init__.py`) has no
+Ceph RBD backend at all, so a Ceph pool will register successfully but
+its info refresh will fail (and its status will show `ERROR`) until an
+RBD backend is implemented -- an honest failure mode, not a silent one,
+and a real feature addition (a working librados/rbd integration) rather
+than a wiring fix, so it's flagged here rather than attempted.
+
+`backend/tests/test_storage_pool_provisioning.py` (8 tests, plus this
+was also `apps.storage`'s first test file at all -- the module had zero
+coverage before this) -- confirmed load-bearing by reverting
+`apps/storage/{services,tasks}.py` and `views.py`'s `perform_create`,
+which makes all 8 fail (6 with an immediate `ImportError`/
+`ModuleNotFoundError`, 2 on the API-level status assertion since the
+bare `ModelViewSet.create()` still returns 201 but with the model's
+default `status=ONLINE` instead of the correct pending `OFFLINE`).

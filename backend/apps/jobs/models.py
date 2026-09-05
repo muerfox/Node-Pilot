@@ -32,6 +32,7 @@ class JobType(models.TextChoices):
     BACKUP_RESTORE = "BACKUP_RESTORE", "Restore backup"
     IMAGE_IMPORT = "IMAGE_IMPORT", "Import image"
     WEBHOOK_DELIVERY = "WEBHOOK_DELIVERY", "Deliver webhook"
+    STORAGE_POOL_CREATE = "STORAGE_POOL_CREATE", "Create storage pool"
 
 
 class JobStatus(models.TextChoices):

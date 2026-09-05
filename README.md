@@ -65,7 +65,7 @@ make agent-test
 make cli-test
 ```
 
-The backend suite (199 tests) runs against SQLite with a faked Redis (no
+The backend suite (207 tests) runs against SQLite with a faked Redis (no
 external services required); it covers the RBAC policy engine
 (including a cross-tenant authorization regression, scoped API tokens
 actually being confined to their declared permission subset, and the
@@ -89,7 +89,9 @@ NIC bandwidth limits, disk iothreads/VM ballooning, boot-device
 order actually reaching the domain XML, and webhook event-type
 dispatch (a webhook scoped to one event actually receiving it, and a
 wildcard-subscribed webhook receiving exactly one delivery per VM
-event, not two), all with the agent
+event, not two), and registering a storage pool actually creating a
+DIRECTORY pool's path and fetching its real capacity from the node
+(plus a periodic refresh keeping that capacity live), all with the agent
 RPC layer mocked. The agent suite (88 tests, +3 skipped when `qemu-img`
 isn't installed) covers protocol framing, domain-XML generation
 (including XML-attribute-injection safety, block- vs. file-backed disk
@@ -103,7 +105,7 @@ per-VM metrics, and a real S3 upload/download round trip (via `moto`)
 for the S3/MinIO/Ceph-RGW backup target. The CLI suite (8 tests) covers
 the HTTP client and command wiring. The frontend (`npm run typecheck &&
 npm run lint && npm run build`) type-checks, lints clean, and builds to
-a 147 KB gzipped bundle (noVNC accounts for most of that). 295
+a 147 KB gzipped bundle (noVNC accounts for most of that). 303
 automated tests pass as of this build.
 
 ## CLI

@@ -161,6 +161,7 @@ CELERY_BEAT_SCHEDULE = {
     "sweep-offline-nodes": {"task": "nodes.sweep_offline_nodes", "schedule": 15.0},
     "reconcile-nodes": {"task": "nodes.reconcile_nodes", "schedule": 300.0},
     "apply-backup-retention": {"task": "backups.apply_retention", "schedule": 3600.0},
+    "refresh-storage-pools": {"task": "storage.refresh_storage_pools", "schedule": 300.0},
 }
 # Tests / local dev without a worker running can force synchronous execution.
 CELERY_TASK_ALWAYS_EAGER = env_bool("CELERY_TASK_ALWAYS_EAGER", False)
